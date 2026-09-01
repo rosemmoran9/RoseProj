@@ -258,17 +258,17 @@ function mulberry32(a){
 // beast  = seconds before the thread beast wakes
 // bspd   = beast speed in cells per second (you move 8)
 const LEVELS = [
-  {c: 7,  r: 6,  still: 7.0, beast: 26, bspd: 2.2},
-  {c: 9,  r: 7,  still: 6.6, beast: 24, bspd: 2.4},
-  {c: 11, r: 8,  still: 6.2, beast: 23, bspd: 2.6},
-  {c: 13, r: 9,  still: 5.8, beast: 21, bspd: 2.8},
-  {c: 15, r: 10, still: 5.4, beast: 20, bspd: 3.0},
-  {c: 17, r: 11, still: 5.0, beast: 18, bspd: 3.2},
-  {c: 19, r: 12, still: 4.7, beast: 17, bspd: 3.4},
-  {c: 21, r: 13, still: 4.4, beast: 16, bspd: 3.6},
-  {c: 23, r: 14, still: 4.1, beast: 15, bspd: 3.7},
-  {c: 25, r: 15, still: 3.8, beast: 13, bspd: 3.9},
-  {c: 27, r: 16, still: 3.5, beast: 12, bspd: 4.1}
+  {c: 7,  r: 6,  still: 7.0, beast: 13, bspd: 2.2},
+  {c: 9,  r: 7,  still: 6.6, beast: 12, bspd: 2.4},
+  {c: 11, r: 8,  still: 6.2, beast: 11, bspd: 2.6},
+  {c: 13, r: 9,  still: 5.8, beast: 10, bspd: 2.8},
+  {c: 15, r: 10, still: 5.4, beast:  9, bspd: 3.0},
+  {c: 17, r: 11, still: 5.0, beast:  8, bspd: 3.2},
+  {c: 19, r: 12, still: 4.7, beast:  8, bspd: 3.4},
+  {c: 21, r: 13, still: 4.4, beast:  7, bspd: 3.6},
+  {c: 23, r: 14, still: 4.1, beast:  6, bspd: 3.7},
+  {c: 25, r: 15, still: 3.8, beast:  5, bspd: 3.9},
+  {c: 27, r: 16, still: 3.5, beast:  4, bspd: 4.1}
 ];
 
 /* ============================================================
@@ -432,6 +432,7 @@ const fxrow = document.getElementById("fxrow");
 const MOVE_TIME = 0.125;   // seconds per cell
 const moveTime = () => MOVE_TIME * (S.fx.haste > 0 ? 0.58 : 1);
 const MAX_THREADS = 3;
+const BEAST_LAG = 4;       // it hunts the yarn you walked, this many cells back
 const ANGRY_DUR = 1.6;     // how long the dot stays cross about a dead end
 const CHEER_DUR = 1.7;     // confetti time before the level card appears
 
@@ -474,6 +475,7 @@ let S = {
   levelT: 0, totalT: 0, lastLevelT: 0,
   angryT: 0,            // countdown on the arms-crossed sulk
   trail: [],
+  trailCells: ["0,0"],  // the cells you walked, in order — the beast's scent
   flash: 0, flashColor: "#e87fae",
   t: 0, shake: 0,
   goalPulse: 0
@@ -674,10 +676,37 @@ function eat(c, r){
   paintRot(c, r);
 }
 
+// The maze is a tree, so if the beast ever gets in front of you there is no way
+// round it. So it may only be born in the region you can reach WITHOUT crossing
+// the road ahead — cut those cells out, flood from your feet, take the farthest
+// thing left. Every route from there back to you then stays behind you.
+function beastSpawnCell(){
+  const m = S.maze;
+  const idx = S.pathIdx.get(S.cc + "," + S.cr);
+  const blocked = new Set();
+  if (idx == null) S.path.forEach(k => blocked.add(k));
+  else for (let i = idx + 1; i < S.path.length; i++) blocked.add(S.path[i]);
+
+  const seen = new Set([S.cc + "," + S.cr]);
+  const order = [[S.cc, S.cr]];
+  for (let i = 0; i < order.length; i++){
+    const c = order[i][0], r = order[i][1];
+    for (let d = 0; d < 4; d++){
+      if (m.at(c, r).w[d]) continue;
+      const nc = c + DX[d], nr = r + DY[d];
+      if (nc < 0 || nr < 0 || nc >= m.cols || nr >= m.rows) continue;
+      const k = nc + "," + nr;
+      if (seen.has(k) || blocked.has(k)) continue;
+      seen.add(k);
+      order.push([nc, nr]);
+    }
+  }
+  return order.length >= 4 ? order[order.length - 1] : null;
+}
+
 function wakeBeast(){
-  // it starts as far from you as the yarn allows
-  const order = bfs(S.maze, S.cc, S.cr).order;
-  const far = order[order.length - 1];
+  const far = beastSpawnCell();
+  if (!far){ S.beastT = 1.2; return; }     // nowhere fair to put it yet — wait
   S.beast = {
     c: far[0], r: far[1], tc: far[0], tr: far[1],
     px: cellX(far[0]), py: cellY(far[1]),
@@ -687,19 +716,28 @@ function wakeBeast(){
   eat(far[0], far[1]);
   S.toasts.push({
     x: S.px, y: S.py,
-    text: "\uD83E\uDDB7  Something is eating the yarn",
-    color: "#d02a45", t: 0
+    text: "\uD83E\uDDB7  Something hungry woke up",
+    color: "#e0607f", t: 0
   });
   S.flash = 1; S.flashColor = "#e0455f"; S.shake = 1;
   paintFx();
 }
 
-// the first cell along the beast's route to you
+// It tracks the yarn you have already walked, a few cells back, so it always
+// comes up the route behind you instead of appearing head-on in a corridor you
+// have no way out of. Stand still and the lag closes to nothing.
+function beastTarget(){
+  const lag = Math.max(0, BEAST_LAG - Math.floor(S.still * 3));
+  const i = Math.max(0, S.trailCells.length - 1 - lag);
+  return S.trailCells[i];
+}
+
+// the first cell along the beast's route to that scent
 function beastNext(){
   const b = S.beast;
   const home = b.c + "," + b.r;
   const prev = bfs(S.maze, b.c, b.r).prev;
-  const target = S.cc + "," + S.cr;
+  const target = beastTarget();
   if (!prev.has(target) || prev.get(target) === null) return null;
   let k = target;
   while (prev.get(k) !== home) k = prev.get(k);
@@ -737,72 +775,107 @@ function stepBeast(dt){
 }
 
 function drawBeast(g, cs, t){
-  const b = S.beast;
-  const R = cs * 0.36;
-  const open = 0.20 + Math.abs(Math.sin(t * 8)) * 0.42;
+  const bs = S.beast;
+  const R = cs * 0.30 * (1.11 + Math.sin(t * 15) * 0.035);   // the same cross puff
+  const chomp = 0.5 + 0.5 * Math.sin(t * 7);                 // mouth opening and shutting
+
+  // the dot's furious colours, worn permanently
+  const lit  = C_LIT[1], mid = C_MID[1], deep = C_DEEP[1], face = C_FACE[1];
 
   g.save();
-  g.translate(b.px, b.py);
+  g.translate(bs.px + Math.sin(t * 34) * cs * 0.02, bs.py);
 
-  const halo = g.createRadialGradient(0, 0, R * 0.3, 0, 0, R * 2.1);
-  halo.addColorStop(0, "rgba(224,69,95,0.40)");
-  halo.addColorStop(1, "rgba(224,69,95,0)");
+  const halo = g.createRadialGradient(0, 0, R * 0.3, 0, 0, R * 2.0);
+  halo.addColorStop(0, rgba(deep, 0.34));
+  halo.addColorStop(1, rgba(deep, 0));
   g.fillStyle = halo;
-  g.beginPath(); g.arc(0, 0, R * 2.1, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(0, 0, R * 2.0, 0, Math.PI * 2); g.fill();
 
-  g.rotate(b.ang);
+  // body
+  g.save();
+  g.shadowColor = rgba(deep, 0.45);
+  g.shadowBlur = cs * 0.5;
+  const grad = g.createRadialGradient(-R * 0.35, -R * 0.4, R * 0.12, 0, 0, R);
+  grad.addColorStop(0, rgb(lit));
+  grad.addColorStop(0.4, rgb(mid));
+  grad.addColorStop(1, rgb(deep));
+  g.fillStyle = grad;
+  g.beginPath(); g.arc(0, 0, R, 0, Math.PI * 2); g.fill();
+  g.restore();
 
-  // frayed fibres, still unravelling
-  g.strokeStyle = "rgba(224,69,95,0.55)";
-  g.lineWidth = Math.max(1, R * 0.06);
-  g.lineCap = "round";
-  for (let i = 0; i < 11; i++){
-    const a = i / 11 * Math.PI * 2 + t * 0.6;
-    const l = R * (1.16 + Math.sin(t * 6 + i) * 0.14);
+  // shine
+  g.fillStyle = "rgba(255,255,255,0.45)";
+  g.beginPath(); g.ellipse(-R * 0.32, -R * 0.36, R * 0.26, R * 0.18, -0.6, 0, Math.PI * 2); g.fill();
+
+  // squinted eyes, exactly as the dot squints when it is cross
+  g.fillStyle = rgb(face);
+  for (const side of [-1, 1]){
     g.beginPath();
-    g.moveTo(Math.cos(a) * R * 0.94, Math.sin(a) * R * 0.94);
-    g.lineTo(Math.cos(a) * l, Math.sin(a) * l);
+    g.ellipse(side * R * 0.33, -R * 0.07, R * 0.145, R * 0.13, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.fillStyle = "rgba(255,255,255,0.35)";
+  for (const side of [-1, 1]){
+    g.beginPath();
+    g.arc(side * R * 0.33 - R * 0.05, -R * 0.13, R * 0.055, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  // angry brows
+  g.strokeStyle = rgb(face);
+  g.lineWidth = R * 0.13;
+  g.lineCap = "round";
+  for (const side of [-1, 1]){
+    g.beginPath();
+    g.moveTo(side * R * 0.58, -R * 0.52);
+    g.lineTo(side * R * 0.13, -R * 0.24);
     g.stroke();
   }
 
-  // the mouth itself
-  const body = g.createRadialGradient(-R * 0.3, -R * 0.3, R * 0.1, 0, 0, R);
-  body.addColorStop(0, "#ff8fa0");
-  body.addColorStop(0.5, "#e0455f");
-  body.addColorStop(1, "#a8122f");
-  g.fillStyle = body;
+  // ---- the mouth: opens and shuts, with rounded white teeth ----
+  const mw = R * 0.72;
+  const mh = R * (0.13 + chomp * 0.48);
+  const my = R * 0.42;
+
+  g.save();
   g.beginPath();
-  g.moveTo(0, 0);
-  g.arc(0, 0, R, open, Math.PI * 2 - open);
-  g.closePath();
+  g.ellipse(0, my, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+  g.fillStyle = "#5e0a1e";
   g.fill();
+  g.clip();
 
-  // teeth along both jaws
-  g.fillStyle = "#fff4f6";
-  for (const sgn of [1, -1]){
-    const a = sgn * open;
-    const ux = Math.cos(a), uy = Math.sin(a);
-    const px = sgn > 0 ? uy : -uy;
-    const py = sgn > 0 ? -ux : ux;
-    for (let i = 1; i <= 3; i++){
-      const rr = R * (0.34 + i * 0.20);
-      const bx = ux * rr, by = uy * rr;
-      g.beginPath();
-      g.moveTo(bx - ux * R * 0.085, by - uy * R * 0.085);
-      g.lineTo(bx + ux * R * 0.085, by + uy * R * 0.085);
-      g.lineTo(bx + px * R * 0.17,  by + py * R * 0.17);
-      g.closePath(); g.fill();
-    }
+  g.fillStyle = "#fff7f9";
+  const tr = R * 0.095;
+  for (let i = -1; i <= 1; i++){
+    g.beginPath();
+    g.arc(i * mw * 0.27, my - mh / 2 + tr * 0.72, tr, 0, Math.PI * 2);
+    g.fill();
   }
+  for (let i = -1; i <= 1; i++){
+    g.beginPath();
+    g.arc(i * mw * 0.27 + mw * 0.135, my + mh / 2 - tr * 0.72, tr, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.restore();
 
-  // two small mean eyes
-  for (const sgn of [1, -1]){
-    const a = sgn * (open + 1.05);
-    g.fillStyle = "#fff";
-    g.beginPath(); g.arc(Math.cos(a) * R * 0.55, Math.sin(a) * R * 0.55, R * 0.15, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "#7d0c22";
-    g.beginPath(); g.arc(Math.cos(a) * R * 0.60, Math.sin(a) * R * 0.60, R * 0.075, 0, Math.PI * 2); g.fill();
-  }
+  g.strokeStyle = rgba(face, 0.5);
+  g.lineWidth = R * 0.045;
+  g.beginPath();
+  g.ellipse(0, my, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+  g.stroke();
+
+  // the little anger mark
+  const sp = R * 0.34 * (0.7 + Math.sin(t * 12) * 0.12);
+  const ax = R * 0.92, ay = -R * 0.92;
+  g.strokeStyle = "rgba(226,48,80,0.95)";
+  g.lineWidth = R * 0.10;
+  g.beginPath();
+  g.moveTo(ax - sp * 0.55, ay - sp * 0.10); g.lineTo(ax - sp * 0.05, ay - sp * 0.60);
+  g.lineTo(ax - sp * 0.05, ay - sp * 0.05);
+  g.moveTo(ax + sp * 0.05, ay + sp * 0.05); g.lineTo(ax + sp * 0.05, ay + sp * 0.60);
+  g.lineTo(ax + sp * 0.55, ay + sp * 0.10);
+  g.stroke();
+
   g.restore();
 }
 
@@ -834,6 +907,7 @@ function startLevel(n){
   S.levelT = 0;
   S.angryT = 0;
   S.trail = [];
+  S.trailCells = ["0,0"];
   S.flash = 0;
   S.goalPulse = 0;
   S.mode = "play";
@@ -919,6 +993,7 @@ function arrive(){
   S.px = cellX(S.cc); S.py = cellY(S.cr);
   S.trail.push({x: S.px, y: S.py});
   if (S.trail.length > 340) S.trail.shift();
+  S.trailCells.push(S.cc + "," + S.cr);
   S.still = 0;
   const here = S.cc + "," + S.cr;
   if (S.eaten.has(here)){
@@ -1632,9 +1707,9 @@ function frame(now){
     // the beast
     if (!S.beast){
       S.beastT -= dt;
-      if (S.beastT <= 5 && !S.beastWarned){
+      if (S.beastT <= LEVELS[S.level].beast * 0.45 && !S.beastWarned){
         S.beastWarned = true;
-        S.toasts.push({x: S.px, y: S.py, text: "The yarn is trembling\u2026", color: "#d02a45", t: 0});
+        S.toasts.push({x: S.px, y: S.py, text: "The yarn is trembling\u2026", color: "#e0607f", t: 0});
       }
       if (S.beastT <= 0) wakeBeast();
     } else {
