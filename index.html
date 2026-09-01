@@ -106,6 +106,12 @@
     animation:fxin .3s cubic-bezier(.2,1.5,.5,1);
   }
   .fxchip b{font-size:13px; font-weight:400}
+  .fxchip.danger{
+    border-color:#f8ccd4; color:#d02a45;
+    box-shadow:0 3px 12px rgba(224,69,95,.28);
+    animation:fxin .3s cubic-bezier(.2,1.5,.5,1), gnaw 1s ease-in-out infinite;
+  }
+  @keyframes gnaw{50%{transform:scale(1.07)}}
   @keyframes fxin{from{transform:scale(.6); opacity:0}}
 
   .levelchip{
@@ -226,6 +232,11 @@
    Palette
    ============================================================ */
 const YARN = ["#f4a9c8", "#c9a0f0", "#f6d089", "#eab6e6", "#b98cf0"];
+const YARN_THEME = {pal: YARN, shadow: "rgba(170,120,190,0.13)", hair: "rgba(190,140,205,0.30)"};
+const ROT_THEME  = {
+  pal: ["#e0455f", "#ff6b7f", "#c02a45", "#f2748a", "#ff8fa0"],
+  shadow: "rgba(150,20,45,0.20)", hair: "rgba(205,45,75,0.45)"
+};
 const PAPER = "#fffafc";
 
 /* ============================================================
@@ -243,18 +254,21 @@ function mulberry32(a){
 /* ============================================================
    Level shapes — nine of them, growing gently
    ============================================================ */
+// still  = seconds you may stand still
+// beast  = seconds before the thread beast wakes
+// bspd   = beast speed in cells per second (you move 8)
 const LEVELS = [
-  {c: 7,  r: 6,  still: 8.0},
-  {c: 9,  r: 7,  still: 7.5},
-  {c: 11, r: 8,  still: 7.0},
-  {c: 13, r: 9,  still: 6.5},
-  {c: 15, r: 10, still: 6.0},
-  {c: 17, r: 11, still: 5.6},
-  {c: 19, r: 12, still: 5.2},
-  {c: 21, r: 13, still: 4.8},
-  {c: 23, r: 14, still: 4.4},
-  {c: 25, r: 15, still: 4.1},
-  {c: 27, r: 16, still: 3.8}
+  {c: 7,  r: 6,  still: 7.0, beast: 26, bspd: 2.2},
+  {c: 9,  r: 7,  still: 6.6, beast: 24, bspd: 2.4},
+  {c: 11, r: 8,  still: 6.2, beast: 23, bspd: 2.6},
+  {c: 13, r: 9,  still: 5.8, beast: 21, bspd: 2.8},
+  {c: 15, r: 10, still: 5.4, beast: 20, bspd: 3.0},
+  {c: 17, r: 11, still: 5.0, beast: 18, bspd: 3.2},
+  {c: 19, r: 12, still: 4.7, beast: 17, bspd: 3.4},
+  {c: 21, r: 13, still: 4.4, beast: 16, bspd: 3.6},
+  {c: 23, r: 14, still: 4.1, beast: 15, bspd: 3.7},
+  {c: 25, r: 15, still: 3.8, beast: 13, bspd: 3.9},
+  {c: 27, r: 16, still: 3.5, beast: 12, bspd: 4.1}
 ];
 
 /* ============================================================
@@ -320,19 +334,20 @@ function yarnPath(g, x0, y0, x1, y1, amp, freq, phase, ox, oy){
   }
 }
 
-function drawYarnSegment(g, x0, y0, x1, y1, cs, rnd){
+function drawYarnSegment(g, x0, y0, x1, y1, cs, rnd, theme){
+  const TH = theme || YARN_THEME;
   const len = Math.hypot(x1 - x0, y1 - y0) || 1;
   const amp  = cs * 0.045;
   const freq = Math.PI * 2 * (1.4 + rnd() * 0.7);
   const phase = rnd() * Math.PI * 2;
-  const color = YARN[Math.floor(rnd() * YARN.length)];
+  const color = TH.pal[Math.floor(rnd() * TH.pal.length)];
   const W = cs * 0.17;
 
   g.lineCap = "round";
   g.lineJoin = "round";
 
   // soft shadow under the thread
-  g.strokeStyle = "rgba(170,120,190,0.13)";
+  g.strokeStyle = TH.shadow;
   g.lineWidth = W * 1.15;
   yarnPath(g, x0, y0, x1, y1, amp, freq, phase, 0, cs * 0.045);
   g.stroke();
@@ -364,7 +379,7 @@ function drawYarnSegment(g, x0, y0, x1, y1, cs, rnd){
   }
 
   // stray fibres
-  g.strokeStyle = "rgba(190,140,205,0.30)";
+  g.strokeStyle = TH.hair;
   g.lineWidth = Math.max(0.6, W * 0.09);
   const hairs = 1 + Math.floor(rnd() * 2);
   for (let h = 0; h < hairs; h++){
@@ -422,8 +437,8 @@ const CHEER_DUR = 1.7;     // confetti time before the level card appears
 
 // what the little treasures in the maze do
 const CHARMS = {
-  scissors: {icon: "\u2702\uFE0F", name: "Scissors",     note: "Stillness snipped \u2014 the meter crawls",  dur: 13},
-  spool:    {icon: "\uD83E\uDDF5", name: "Spool",        note: "A thread mended",                            dur: 5},
+  scissors: {icon: "\u2702\uFE0F", name: "Scissors",     note: "Stillness eased, a little",                   dur: 7},
+  spool:    {icon: "\uD83E\uDDF5", name: "Spool",        note: "A thread mended",                            dur: 3.5},
   beacon:   {icon: "\u2728",        name: "Glimmer",      note: "The way ahead lights up",                    dur: 6},
   shuttle:  {icon: "\u26A1",        name: "Shuttle",      note: "Quick feet",                                 dur: 9}
 };
@@ -446,6 +461,11 @@ let S = {
   pathIdx: null,        // "c,r" -> position along that route
   onPath: new Set(),    // route cells actually walked, for the progress %
   charms: null,         // "c,r" -> charm type
+  eaten: new Set(),     // cells the beast has chewed red — deadly to touch
+  rot: null, rotCtx: null,
+  beast: null,          // the thread beast, once it wakes
+  beastT: 99,           // seconds until it does
+  beastWarned: false,
   fx: {slow: 0, freeze: 0, haste: 0, beacon: 0},
   toasts: [],
   confetti: [],
@@ -535,6 +555,36 @@ function weaveFabric(){
   S.fabricW = w;
   S.fabricH = h;
   S.fabricB = B;
+
+  // a second, initially clean layer holding everything the beast has eaten
+  const rot = document.createElement("canvas");
+  rot.width = f.width; rot.height = f.height;
+  S.rot = rot;
+  S.rotCtx = rot.getContext("2d");
+  S.rotCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  S.eaten.forEach(k => { const [c, r] = k.split(",").map(Number); paintRot(c, r); });
+}
+
+/* ---------- one cell, chewed ---------- */
+function paintRot(c, r){
+  const g = S.rotCtx, cs = S.cs, B = S.fabricB;
+  if (!g) return;
+  const x = B + c * cs, y = B + r * cs;
+
+  const stain = g.createRadialGradient(x + cs / 2, y + cs / 2, cs * 0.05,
+                                       x + cs / 2, y + cs / 2, cs * 0.62);
+  stain.addColorStop(0, "rgba(224,69,95,0.44)");
+  stain.addColorStop(1, "rgba(224,69,95,0.20)");
+  g.fillStyle = stain;
+  roundRect(g, x + cs * 0.08, y + cs * 0.08, cs * 0.84, cs * 0.84, cs * 0.24);
+  g.fill();
+
+  const rnd = mulberry32(9001 + c * 7919 + r * 104729);
+  const w = S.maze.at(c, r).w;
+  if (w[0]) drawYarnSegment(g, x, y, x + cs, y, cs, rnd, ROT_THEME);
+  if (w[3]) drawYarnSegment(g, x, y, x, y + cs, cs, rnd, ROT_THEME);
+  if (w[1]) drawYarnSegment(g, x + cs, y, x + cs, y + cs, cs, rnd, ROT_THEME);
+  if (w[2]) drawYarnSegment(g, x, y + cs, x + cs, y + cs, cs, rnd, ROT_THEME);
 }
 
 /* ---------- the one true route, by breadth-first search ---------- */
@@ -585,7 +635,7 @@ function scatterCharms(m, path, rnd, level){
   };
   shuffle(near); shuffle(far);
 
-  const total = 2 + Math.floor(level * 0.55);        // 2 on level 1, 8 on level 11
+  const total = 2 + Math.floor(level * 0.45);        // 2 on level 1, 6 on level 11
   const onRoute = Math.max(1, Math.round(total * 0.55));
   const picks = near.slice(0, onRoute).concat(far.slice(0, total - onRoute));
 
@@ -596,6 +646,164 @@ function scatterCharms(m, path, rnd, level){
     charms.set(k, i === 0 ? "scissors" : bag[Math.floor(rnd() * bag.length)]);
   });
   return charms;
+}
+
+/* ---------- the thread beast ---------- */
+function bfs(m, sc, sr){
+  const prev = new Map([[sc + "," + sr, null]]);
+  const order = [[sc, sr]];
+  for (let i = 0; i < order.length; i++){
+    const c = order[i][0], r = order[i][1];
+    for (let d = 0; d < 4; d++){
+      if (m.at(c, r).w[d]) continue;
+      const nc = c + DX[d], nr = r + DY[d];
+      if (nc < 0 || nr < 0 || nc >= m.cols || nr >= m.rows) continue;
+      const k = nc + "," + nr;
+      if (prev.has(k)) continue;
+      prev.set(k, c + "," + r);
+      order.push([nc, nr]);
+    }
+  }
+  return {prev: prev, order: order};
+}
+
+function eat(c, r){
+  const k = c + "," + r;
+  if (S.eaten.has(k)) return;
+  S.eaten.add(k);
+  paintRot(c, r);
+}
+
+function wakeBeast(){
+  // it starts as far from you as the yarn allows
+  const order = bfs(S.maze, S.cc, S.cr).order;
+  const far = order[order.length - 1];
+  S.beast = {
+    c: far[0], r: far[1], tc: far[0], tr: far[1],
+    px: cellX(far[0]), py: cellY(far[1]),
+    mt: 0, moving: false, ang: 0,
+    speed: LEVELS[S.level].bspd
+  };
+  eat(far[0], far[1]);
+  S.toasts.push({
+    x: S.px, y: S.py,
+    text: "\uD83E\uDDB7  Something is eating the yarn",
+    color: "#d02a45", t: 0
+  });
+  S.flash = 1; S.flashColor = "#e0455f"; S.shake = 1;
+  paintFx();
+}
+
+// the first cell along the beast's route to you
+function beastNext(){
+  const b = S.beast;
+  const home = b.c + "," + b.r;
+  const prev = bfs(S.maze, b.c, b.r).prev;
+  const target = S.cc + "," + S.cr;
+  if (!prev.has(target) || prev.get(target) === null) return null;
+  let k = target;
+  while (prev.get(k) !== home) k = prev.get(k);
+  return k.split(",").map(Number);
+}
+
+function stepBeast(dt){
+  const b = S.beast;
+  b.speed += dt * 0.05;                     // it gets hungrier as it goes
+
+  if (!b.moving){
+    const nx = beastNext();
+    if (nx){
+      b.tc = nx[0]; b.tr = nx[1];
+      b.moving = true; b.mt = 0;
+      b.ang = Math.atan2(cellY(b.tr) - cellY(b.r), cellX(b.tc) - cellX(b.c));
+    }
+  }
+  if (b.moving){
+    b.mt += dt * b.speed;
+    if (b.mt >= 1){
+      b.c = b.tc; b.r = b.tr;
+      b.moving = false; b.mt = 0;
+      eat(b.c, b.r);
+    }
+  }
+  const f = Math.min(1, b.mt);
+  b.px = cellX(b.c) + (cellX(b.tc) - cellX(b.c)) * f;
+  b.py = cellY(b.r) + (cellY(b.tr) - cellY(b.r)) * f;
+
+  if (Math.hypot(b.px - S.px, b.py - S.py) < S.cs * 0.52){
+    gameOver("Eaten.",
+      "The thread beast caught up and chewed you into its knot. It was always going to be faster than standing still.");
+  }
+}
+
+function drawBeast(g, cs, t){
+  const b = S.beast;
+  const R = cs * 0.36;
+  const open = 0.20 + Math.abs(Math.sin(t * 8)) * 0.42;
+
+  g.save();
+  g.translate(b.px, b.py);
+
+  const halo = g.createRadialGradient(0, 0, R * 0.3, 0, 0, R * 2.1);
+  halo.addColorStop(0, "rgba(224,69,95,0.40)");
+  halo.addColorStop(1, "rgba(224,69,95,0)");
+  g.fillStyle = halo;
+  g.beginPath(); g.arc(0, 0, R * 2.1, 0, Math.PI * 2); g.fill();
+
+  g.rotate(b.ang);
+
+  // frayed fibres, still unravelling
+  g.strokeStyle = "rgba(224,69,95,0.55)";
+  g.lineWidth = Math.max(1, R * 0.06);
+  g.lineCap = "round";
+  for (let i = 0; i < 11; i++){
+    const a = i / 11 * Math.PI * 2 + t * 0.6;
+    const l = R * (1.16 + Math.sin(t * 6 + i) * 0.14);
+    g.beginPath();
+    g.moveTo(Math.cos(a) * R * 0.94, Math.sin(a) * R * 0.94);
+    g.lineTo(Math.cos(a) * l, Math.sin(a) * l);
+    g.stroke();
+  }
+
+  // the mouth itself
+  const body = g.createRadialGradient(-R * 0.3, -R * 0.3, R * 0.1, 0, 0, R);
+  body.addColorStop(0, "#ff8fa0");
+  body.addColorStop(0.5, "#e0455f");
+  body.addColorStop(1, "#a8122f");
+  g.fillStyle = body;
+  g.beginPath();
+  g.moveTo(0, 0);
+  g.arc(0, 0, R, open, Math.PI * 2 - open);
+  g.closePath();
+  g.fill();
+
+  // teeth along both jaws
+  g.fillStyle = "#fff4f6";
+  for (const sgn of [1, -1]){
+    const a = sgn * open;
+    const ux = Math.cos(a), uy = Math.sin(a);
+    const px = sgn > 0 ? uy : -uy;
+    const py = sgn > 0 ? -ux : ux;
+    for (let i = 1; i <= 3; i++){
+      const rr = R * (0.34 + i * 0.20);
+      const bx = ux * rr, by = uy * rr;
+      g.beginPath();
+      g.moveTo(bx - ux * R * 0.085, by - uy * R * 0.085);
+      g.lineTo(bx + ux * R * 0.085, by + uy * R * 0.085);
+      g.lineTo(bx + px * R * 0.17,  by + py * R * 0.17);
+      g.closePath(); g.fill();
+    }
+  }
+
+  // two small mean eyes
+  for (const sgn of [1, -1]){
+    const a = sgn * (open + 1.05);
+    g.fillStyle = "#fff";
+    g.beginPath(); g.arc(Math.cos(a) * R * 0.55, Math.sin(a) * R * 0.55, R * 0.15, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#7d0c22";
+    g.beginPath(); g.arc(Math.cos(a) * R * 0.60, Math.sin(a) * R * 0.60, R * 0.075, 0, Math.PI * 2); g.fill();
+  }
+  g.restore();
 }
 
 /* ---------- level setup ---------- */
@@ -616,6 +824,10 @@ function startLevel(n){
   S.onPath = new Set(["0,0"]);
   S.charms = scatterCharms(S.maze, sol.path, mulberry32(555 + n * 8887), n);
   S.fx = {slow: 0, freeze: 0, haste: 0, beacon: 0};
+  S.eaten = new Set();
+  S.beast = null;
+  S.beastT = L.beast;
+  S.beastWarned = false;
   S.toasts = [];
   S.confetti = [];
   S.joy = 0; S.cheerT = 0;
@@ -652,10 +864,23 @@ function paintFx(){
   if (S.fx.freeze > 0) parts.push(["\uD83E\uDDF5", S.fx.freeze]);
   if (S.fx.haste > 0)  parts.push(["\u26A1", S.fx.haste]);
   if (S.fx.beacon > 0) parts.push(["\u2728", S.fx.beacon]);
-  const sig = parts.map(p => p[0] + Math.ceil(p[1])).join("|");
+  let danger = null;
+  if (S.mode === "play"){
+    if (S.beast) danger = "loose";
+    else if (S.beastT <= 9) danger = Math.max(0, Math.ceil(S.beastT)) + "s";
+  }
+  const sig = danger + "|" + parts.map(p => p[0] + Math.ceil(p[1])).join("|");
   if (sig === S.fxSig) return;
   S.fxSig = sig;
   fxrow.innerHTML = "";
+  if (danger){
+    const el = document.createElement("div");
+    el.className = "fxchip danger";
+    el.innerHTML = "<b></b><span></span>";
+    el.firstChild.textContent = "\uD83E\uDDB7";
+    el.lastChild.textContent = danger;
+    fxrow.appendChild(el);
+  }
   parts.forEach(([icon, left]) => {
     const el = document.createElement("div");
     el.className = "fxchip";
@@ -696,6 +921,11 @@ function arrive(){
   if (S.trail.length > 340) S.trail.shift();
   S.still = 0;
   const here = S.cc + "," + S.cr;
+  if (S.eaten.has(here)){
+    gameOver("You touched the rot.",
+      "That stretch of yarn had already been chewed through. Red thread doesn't hold anyone.");
+    return;
+  }
   S.visited.add(here);
   if (S.pathIdx.has(here)) S.onPath.add(here);
   paintPct();
@@ -850,6 +1080,7 @@ function showClearCard(){
 }
 
 function gameOver(title, body){
+  if (S.mode !== "play") return;          // only die once
   S.mode = "over";
   show({
     emoji: "🪡",
@@ -891,7 +1122,8 @@ function title(){
     html: '<div class="rules">' +
           '<span>·</span> Move with arrows, WASD, or a swipe.<br>' +
           '<span>·</span> Don\'t linger — stillness unspools you.<br>' +
-          '<span>·</span> Three dead ends and the thread runs out.<br><span>·</span> Pick up the charms you pass — scissors slow the meter.' +
+          '<span>·</span> Three dead ends and the thread runs out.<br><span>·</span> Pick up the charms you pass — scissors help a little.<br>' +
+          '<span>·</span> Dawdle and the thread beast wakes. Never touch red.' +
           '</div>',
     btn: "Pull the thread",
     action: () => { S.threads = MAX_THREADS; S.totalT = 0; paintHud(); hide(); startLevel(0); }
@@ -1093,7 +1325,7 @@ function drawToasts(g, cs){
     roundRect(g, o.x - w / 2, y - h / 2, w, h, h / 2);
     g.fill();
     g.shadowBlur = 0;
-    g.fillStyle = "#0f8f80";
+    g.fillStyle = o.color || "#0f8f80";
     g.fillText(o.text, o.x, y);
     g.restore();
   }
@@ -1314,6 +1546,9 @@ function draw(){
     ctx.drawImage(S.fabric, S.ox - S.fabricB, S.oy - S.fabricB, S.fabricW, S.fabricH);
   }
 
+  if (S.rot) ctx.drawImage(S.rot, S.ox - S.fabricB, S.oy - S.fabricB, S.fabricW, S.fabricH);
+  if (S.beast) drawBeast(ctx, cs, S.t);
+
   drawDot(ctx, S.px, S.py, cs, S.t, Math.min(1, S.still / S.stillMax), angerNow(), S.joy);
   drawToasts(ctx, cs);
 
@@ -1375,7 +1610,7 @@ function frame(now){
 
     if (!S.moving){
       // scissors slow the winding; a spare spool stops it dead
-      const rate = S.fx.freeze > 0 ? 0 : (S.fx.slow > 0 ? 0.4 : 1);
+      const rate = S.fx.freeze > 0 ? 0 : (S.fx.slow > 0 ? 0.74 : 1);
       S.still += dt * rate;
       if (S.still >= S.stillMax){
         gameOver("You sat too long.",
@@ -1393,6 +1628,18 @@ function frame(now){
       if (S.fx[k] > 0){ S.fx[k] = Math.max(0, S.fx[k] - dt); fxChanged = true; }
     }
     if (fxChanged) paintFx();
+
+    // the beast
+    if (!S.beast){
+      S.beastT -= dt;
+      if (S.beastT <= 5 && !S.beastWarned){
+        S.beastWarned = true;
+        S.toasts.push({x: S.px, y: S.py, text: "The yarn is trembling\u2026", color: "#d02a45", t: 0});
+      }
+      if (S.beastT <= 0) wakeBeast();
+    } else {
+      stepBeast(dt);
+    }
 
     // the clock
     S.levelT += dt;
