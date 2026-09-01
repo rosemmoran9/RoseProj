@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Yarnwork — a little maze of string</title>
+<style>
+  :root{
+    --paper:#e8f2fd;
+    --sky:#cfe6ff;
+    --ink:#42406e;
+    --ink-soft:#7e88b0;
+    --blue:#7fb6f0;
+    --blue-deep:#4a7fd0;
+    --pink:#f4a9c8;
+    --pink-deep:#e87fae;
+    --purple:#b98cf0;
+    --purple-deep:#8b4fd6;
+    --gold:#f0c04a;
+    --gold-soft:#f6d089;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family:"Avenir Next","Segoe UI",-apple-system,BlinkMacSystemFont,sans-serif;
+    color:var(--ink);
+    background:
+      radial-gradient(1200px 700px at 12% -10%, #dcecff 0%, rgba(220,236,255,0) 62%),
+      radial-gradient(1000px 800px at 100% 110%, #e2e2ff 0%, rgba(226,226,255,0) 60%),
+      radial-gradient(700px 500px at 85% 0%, #f2e8ff 0%, rgba(242,232,255,0) 60%),
+      var(--paper);
+    display:flex; flex-direction:column;
+    overflow:hidden;
+    -webkit-user-select:none; user-select:none;
+    touch-action:none;
+  }
+
+  /* ---------- header ---------- */
+  header{
+    flex:0 0 auto;
+    padding:14px 18px 10px;
+    display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  }
+  .brand{display:flex; align-items:baseline; gap:10px; margin-right:auto}
+  .brand h1{
+    margin:0; font-size:20px; letter-spacing:.16em; text-transform:uppercase;
+    font-weight:600; color:var(--purple-deep);
+  }
+  .brand .sub{font-size:12px; color:var(--ink-soft); letter-spacing:.08em}
+
+  .gauge{display:flex; align-items:center; gap:9px}
+  .gauge .label{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-soft)}
+
+  .lives{display:flex; gap:6px}
+  .ball{
+    width:16px; height:16px; border-radius:50%;
+    background:radial-gradient(circle at 34% 30%, #fff 0 12%, var(--pink) 30%, var(--pink-deep) 100%);
+    box-shadow:0 1px 4px rgba(232,127,174,.45), inset -1px -2px 3px rgba(160,60,110,.25);
+    transition:all .35s ease;
+  }
+  .ball.spent{
+    background:radial-gradient(circle at 34% 30%, #fff 0 12%, #f2e6ee 40%, #e6d6e2 100%);
+    box-shadow:none; opacity:.5; transform:scale(.78);
+  }
+
+  .stillbar{
+    width:150px; height:9px; border-radius:99px; overflow:hidden;
+    background:rgba(255,255,255,.72); box-shadow:inset 0 1px 2px rgba(90,110,160,.18);
+  }
+  .stillbar i{
+    display:block; height:100%; width:0%;
+    background:linear-gradient(90deg, var(--gold-soft), var(--gold));
+    border-radius:99px; transition:background .3s ease;
+  }
+  .stillbar.warn i{background:linear-gradient(90deg, var(--pink), var(--pink-deep))}
+
+  .pctbar{
+    width:110px; height:9px; border-radius:99px; overflow:hidden;
+    background:rgba(255,255,255,.72); box-shadow:inset 0 1px 2px rgba(90,110,160,.18);
+  }
+  .pctbar i{
+    display:block; height:100%; width:0%;
+    background:linear-gradient(90deg, var(--purple), var(--purple-deep));
+    border-radius:99px; transition:width .28s cubic-bezier(.3,1.2,.5,1);
+  }
+  .pcttext{
+    font-size:12px; font-weight:600; color:var(--purple-deep);
+    min-width:38px; text-align:right; font-variant-numeric:tabular-nums;
+  }
+
+  .levelchip{
+    font-size:12px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--purple-deep); background:rgba(255,255,255,.8);
+    border:1px solid #d8e5f8; border-radius:99px; padding:5px 13px;
+  }
+
+  /* ---------- stage ---------- */
+  #stage{flex:1 1 auto; position:relative; min-height:0}
+  canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
+
+  footer{
+    flex:0 0 auto; padding:8px 18px 14px;
+    font-size:12px; color:var(--ink-soft); letter-spacing:.06em; text-align:center;
+  }
+  kbd{
+    font:inherit; font-size:11px; background:#fff; border:1px solid #dbe6f7;
+    border-bottom-width:2px; border-radius:5px; padding:1px 6px; color:var(--ink);
+  }
+
+  /* ---------- overlay ---------- */
+  #overlay{
+    position:absolute; inset:0; display:none;
+    align-items:center; justify-content:center;
+    background:rgba(232,242,253,.84); backdrop-filter:blur(7px);
+    z-index:5;
+  }
+  #overlay.on{display:flex; animation:fade .35s ease}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .card{
+    background:#fff; border-radius:26px; padding:38px 44px;
+    box-shadow:0 22px 60px rgba(70,100,170,.22), 0 2px 0 #eaf1fb;
+    text-align:center; max-width:440px; animation:pop .4s cubic-bezier(.2,1.4,.5,1);
+  }
+  @keyframes pop{from{transform:scale(.9) translateY(10px); opacity:0}}
+  .card .emoji{font-size:40px; line-height:1; margin-bottom:12px}
+  .card h2{margin:0 0 10px; font-size:26px; color:var(--purple-deep); font-weight:600}
+  .card p{margin:0 0 6px; font-size:14px; line-height:1.6; color:var(--ink-soft)}
+  .card p.note{font-size:12.5px; margin-top:14px}
+  .rules{
+    text-align:left; display:inline-block; margin:16px 0 4px;
+    font-size:13px; line-height:1.9; color:var(--ink);
+  }
+  .rules span{color:var(--pink-deep)}
+  button{
+    margin-top:22px; font:inherit; font-size:14px; letter-spacing:.1em;
+    text-transform:uppercase; font-weight:600;
+    color:#fff; background:linear-gradient(135deg, var(--purple), var(--purple-deep));
+    border:none; border-radius:99px; padding:13px 34px; cursor:pointer;
+    box-shadow:0 8px 20px rgba(139,79,214,.32);
+    transition:transform .15s ease, box-shadow .15s ease;
+  }
+  button:hover{transform:translateY(-2px); box-shadow:0 12px 26px rgba(139,79,214,.38)}
+  button:active{transform:translateY(0)}
+  button.ghost{
+    background:none; color:var(--ink-soft); box-shadow:none;
+    padding:10px 18px; margin-left:6px; font-size:12px;
+  }
+  button.ghost:hover{color:var(--purple-deep); transform:none; box-shadow:none}
+
+  @media (max-width:560px){
+    .brand .sub{display:none}
+    .stillbar{width:84px}
+    .pctbar{width:70px}
+    .card{padding:30px 26px; margin:16px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Yarnwork</h1>
+    <span class="sub">a little maze of string</span>
+  </div>
+
+  <div class="gauge">
+    <span class="label">Stillness</span>
+    <div class="stillbar" id="stillbar"><i id="stillfill"></i></div>
+  </div>
+
+  <div class="gauge">
+    <span class="label">Explored</span>
+    <div class="pctbar"><i id="pctfill"></i></div>
+    <span class="pcttext" id="pcttext">0%</span>
+  </div>
+
+  <div class="gauge">
+    <span class="label">Threads</span>
+    <div class="lives" id="lives"></div>
+  </div>
+
+  <div class="levelchip" id="levelchip">Level 1 / 9</div>
+</header>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="overlay">
+    <div class="card" id="card"></div>
+  </div>
+</div>
+
+<footer>
+  <kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&rarr;</kbd> or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> &nbsp;·&nbsp; swipe on touch &nbsp;·&nbsp; keep moving, keep away from dead ends
+</footer>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   Palette
+   ============================================================ */
+const YARN = ["#f4a9c8", "#c9a0f0", "#f6d089", "#eab6e6", "#b98cf0"];
+const PAPER = "#fffafc";
+
+/* ============================================================
+   Seeded RNG (so a level's yarn looks the same every frame)
+   ============================================================ */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+/* ============================================================
+   Level shapes — nine of them, growing gently
+   ============================================================ */
+const LEVELS = [
+  {c: 7,  r: 6,  still: 8.0},
+  {c: 9,  r: 7,  still: 7.5},
+  {c: 11, r: 8,  still: 7.0},
+  {c: 13, r: 9,  still: 6.5},
+  {c: 15, r: 10, still: 6.0},
+  {c: 17, r: 11, still: 5.6},
+  {c: 19, r: 12, still: 5.2},
+  {c: 21, r: 13, still: 4.8},
+  {c: 23, r: 14, still: 4.4}
+];
+
+/* ============================================================
+   Maze generation — recursive backtracker
+   walls: [N, E, S, W]
+   ============================================================ */
+const DX = [0, 1, 0, -1];
+const DY = [-1, 0, 1, 0];
+
+function genMaze(cols, rows, rnd){
+  const cells = new Array(cols * rows);
+  for (let i = 0; i < cells.length; i++){
+    cells[i] = {w: [true, true, true, true], seen: false};
+  }
+  const at = (c, r) => cells[r * cols + c];
+
+  const stack = [{c: 0, r: 0}];
+  at(0, 0).seen = true;
+  let visited = 1;
+
+  while (visited < cols * rows){
+    const cur = stack[stack.length - 1];
+    const open = [];
+    for (let d = 0; d < 4; d++){
+      const nc = cur.c + DX[d], nr = cur.r + DY[d];
+      if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+      if (at(nc, nr).seen) continue;
+      open.push(d);
+    }
+    if (open.length === 0){ stack.pop(); continue; }
+    const d = open[Math.floor(rnd() * open.length)];
+    const nc = cur.c + DX[d], nr = cur.r + DY[d];
+    at(cur.c, cur.r).w[d] = false;
+    at(nc, nr).w[(d + 2) % 4] = false;
+    at(nc, nr).seen = true;
+    visited++;
+    stack.push({c: nc, r: nr});
+  }
+  return {cols, rows, cells, at};
+}
+
+function wallCount(maze, c, r){
+  const w = maze.at(c, r).w;
+  return (w[0]?1:0) + (w[1]?1:0) + (w[2]?1:0) + (w[3]?1:0);
+}
+
+/* ============================================================
+   Yarn drawing
+   ============================================================ */
+function yarnPath(g, x0, y0, x1, y1, amp, freq, phase, ox, oy){
+  const dx = x1 - x0, dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  const nx = -uy, ny = ux;
+  const steps = Math.max(10, Math.round(len / 4));
+  g.beginPath();
+  for (let i = 0; i <= steps; i++){
+    const t = i / steps;
+    const off = Math.sin(t * freq + phase) * amp * Math.sin(Math.PI * t);
+    const px = x0 + ux * len * t + nx * off + ox;
+    const py = y0 + uy * len * t + ny * off + oy;
+    if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+  }
+}
+
+function drawYarnSegment(g, x0, y0, x1, y1, cs, rnd){
+  const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+  const amp  = cs * 0.045;
+  const freq = Math.PI * 2 * (1.4 + rnd() * 0.7);
+  const phase = rnd() * Math.PI * 2;
+  const color = YARN[Math.floor(rnd() * YARN.length)];
+  const W = cs * 0.17;
+
+  g.lineCap = "round";
+  g.lineJoin = "round";
+
+  // soft shadow under the thread
+  g.strokeStyle = "rgba(170,120,190,0.13)";
+  g.lineWidth = W * 1.15;
+  yarnPath(g, x0, y0, x1, y1, amp, freq, phase, 0, cs * 0.045);
+  g.stroke();
+
+  // the body of the thread
+  g.strokeStyle = color;
+  g.lineWidth = W;
+  yarnPath(g, x0, y0, x1, y1, amp, freq, phase, 0, 0);
+  g.stroke();
+
+  // twist — little diagonal ticks that read as spun fibre
+  const dx = (x1 - x0) / len, dy = (y1 - y0) / len;
+  const nx = -dy, ny = dx;
+  const step = cs * 0.155;
+  g.strokeStyle = "rgba(255,255,255,0.62)";
+  g.lineWidth = W * 0.26;
+  for (let s = step * 0.5; s < len; s += step){
+    const t = s / len;
+    const off = Math.sin(t * freq + phase) * amp;
+    const cx = x0 + dx * s + nx * off;
+    const cy = y0 + dy * s + ny * off;
+    const a = 0.62;                        // lean of the twist
+    const tx = dx * Math.cos(a) + nx * Math.sin(a);
+    const ty = dy * Math.cos(a) + ny * Math.sin(a);
+    g.beginPath();
+    g.moveTo(cx - tx * W * 0.42, cy - ty * W * 0.42);
+    g.lineTo(cx + tx * W * 0.42, cy + ty * W * 0.42);
+    g.stroke();
+  }
+
+  // stray fibres
+  g.strokeStyle = "rgba(190,140,205,0.30)";
+  g.lineWidth = Math.max(0.6, W * 0.09);
+  const hairs = 1 + Math.floor(rnd() * 2);
+  for (let h = 0; h < hairs; h++){
+    const t = 0.15 + rnd() * 0.7;
+    const off = Math.sin(t * freq + phase) * amp;
+    const cx = x0 + dx * len * t + nx * off;
+    const cy = y0 + dy * len * t + ny * off;
+    const side = rnd() < 0.5 ? 1 : -1;
+    const l = cs * (0.10 + rnd() * 0.13);
+    const wob = (rnd() - 0.5) * 0.9;
+    g.beginPath();
+    g.moveTo(cx, cy);
+    g.quadraticCurveTo(
+      cx + (nx * side + dx * wob) * l * 0.6,
+      cy + (ny * side + dy * wob) * l * 0.6,
+      cx + (nx * side * 0.7 + dx * wob) * l,
+      cy + (ny * side * 0.7 + dy * wob) * l
+    );
+    g.stroke();
+  }
+}
+
+function drawKnot(g, x, y, cs, rnd){
+  const r = cs * 0.105;
+  const color = YARN[Math.floor(rnd() * YARN.length)];
+  g.fillStyle = color;
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = "rgba(255,255,255,0.55)";
+  g.lineWidth = Math.max(0.8, r * 0.28);
+  g.beginPath(); g.arc(x - r * 0.25, y - r * 0.25, r * 0.55, 0.6, 3.4); g.stroke();
+}
+
+/* ============================================================
+   Game state
+   ============================================================ */
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const stage = document.getElementById("stage");
+const overlay = document.getElementById("overlay");
+const card = document.getElementById("card");
+const livesEl = document.getElementById("lives");
+const stillbar = document.getElementById("stillbar");
+const stillfill = document.getElementById("stillfill");
+const levelchip = document.getElementById("levelchip");
+const pctfill = document.getElementById("pctfill");
+const pcttext = document.getElementById("pcttext");
+
+const MOVE_TIME = 0.125;   // seconds per cell
+const MAX_THREADS = 3;
+const ANGRY_DUR = 1.6;     // how long the dot stays cross about a dead end
+
+let S = {
+  mode: "title",       // title | play | clear | over | win
+  level: 0,
+  maze: null,
+  cs: 40, ox: 0, oy: 0,
+  fabric: null,        // pre-rendered maze layer
+  px: 0, py: 0,        // pixel position of the dot
+  cc: 0, cr: 0,        // current cell
+  tc: 0, tr: 0,        // target cell
+  moving: false, mt: 0,
+  still: 0, stillMax: 8,
+  threads: MAX_THREADS,
+  deadSeen: new Set(),  // dead ends already charged
+  visited: new Set(),   // every cell stepped on, for the explored %
+  angryT: 0,            // countdown on the arms-crossed sulk
+  trail: [],
+  flash: 0, flashColor: "#e87fae",
+  t: 0, shake: 0,
+  goalPulse: 0
+};
+
+const held = {};       // held direction keys
+
+/* ---------- layout ---------- */
+function layout(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = stage.clientWidth, h = stage.clientHeight;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  if (!S.maze) return;
+  const pad = 26;
+  const cs = Math.floor(Math.min(
+    (w - pad * 2) / S.maze.cols,
+    (h - pad * 2) / S.maze.rows
+  ));
+  S.cs = Math.max(14, cs);
+  S.ox = Math.round((w - S.cs * S.maze.cols) / 2);
+  S.oy = Math.round((h - S.cs * S.maze.rows) / 2);
+  weaveFabric();
+  if (!S.moving){ S.px = cellX(S.cc); S.py = cellY(S.cr); }
+}
+
+const cellX = c => S.ox + (c + 0.5) * S.cs;
+const cellY = r => S.oy + (r + 0.5) * S.cs;
+
+/* ---------- pre-render the maze ---------- */
+function weaveFabric(){
+  const m = S.maze, cs = S.cs;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = m.cols * cs + cs, h = m.rows * cs + cs;
+
+  const f = document.createElement("canvas");
+  f.width = Math.round(w * dpr);
+  f.height = Math.round(h * dpr);
+  const g = f.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const rnd = mulberry32(1337 + S.level * 7919);
+  const B = cs * 0.5;                    // bleed so round caps aren't clipped
+
+  const seg = (c, r, d) => {
+    const x = B + c * cs, y = B + r * cs;
+    if (d === 0) drawYarnSegment(g, x, y, x + cs, y, cs, rnd);
+    if (d === 3) drawYarnSegment(g, x, y, x, y + cs, cs, rnd);
+    if (d === 1) drawYarnSegment(g, x + cs, y, x + cs, y + cs, cs, rnd);
+    if (d === 2) drawYarnSegment(g, x, y + cs, x + cs, y + cs, cs, rnd);
+  };
+
+  for (let r = 0; r < m.rows; r++){
+    for (let c = 0; c < m.cols; c++){
+      const wl = m.at(c, r).w;
+      if (wl[0]) seg(c, r, 0);
+      if (wl[3]) seg(c, r, 3);
+      if (c === m.cols - 1 && wl[1]) seg(c, r, 1);
+      if (r === m.rows - 1 && wl[2]) seg(c, r, 2);
+    }
+  }
+
+  // knots where threads meet
+  const knotRnd = mulberry32(97 + S.level * 131);
+  for (let r = 0; r <= m.rows; r++){
+    for (let c = 0; c <= m.cols; c++){
+      let touching = 0;
+      if (c < m.cols && r < m.rows){ const w = m.at(c, r).w; if (w[0]) touching++; if (w[3]) touching++; }
+      if (c > 0 && r < m.rows){ const w = m.at(c - 1, r).w; if (w[0]) touching++; if (w[1]) touching++; }
+      if (c < m.cols && r > 0){ const w = m.at(c, r - 1).w; if (w[2]) touching++; if (w[3]) touching++; }
+      if (c > 0 && r > 0){ const w = m.at(c - 1, r - 1).w; if (w[1]) touching++; if (w[2]) touching++; }
+      if (touching >= 2) drawKnot(g, B + c * cs, B + r * cs, cs, knotRnd);
+    }
+  }
+
+  S.fabric = f;
+  S.fabricW = w;
+  S.fabricH = h;
+  S.fabricB = B;
+}
+
+/* ---------- level setup ---------- */
+function startLevel(n){
+  S.level = n;
+  const L = LEVELS[n];
+  const rnd = mulberry32(20260901 + n * 4241);
+  S.maze = genMaze(L.c, L.r, rnd);
+  S.stillMax = L.still;
+  S.still = 0;
+  S.cc = 0; S.cr = 0; S.tc = 0; S.tr = 0;
+  S.moving = false; S.mt = 0;
+  S.deadSeen = new Set();
+  S.visited = new Set(["0,0"]);
+  S.angryT = 0;
+  S.trail = [];
+  S.flash = 0;
+  S.goalPulse = 0;
+  S.mode = "play";
+  layout();
+  S.px = cellX(0); S.py = cellY(0);
+  S.trail.push({x: S.px, y: S.py});
+  paintHud();
+  paintPct();
+}
+
+function paintPct(){
+  const total = S.maze.cols * S.maze.rows;
+  const pct = S.visited.size / total * 100;
+  pctfill.style.width = pct.toFixed(2) + "%";
+  pcttext.textContent = Math.round(pct) + "%";
+}
+
+function paintHud(){
+  levelchip.textContent = "Level " + (S.level + 1) + " / 9";
+  livesEl.innerHTML = "";
+  for (let i = 0; i < MAX_THREADS; i++){
+    const b = document.createElement("div");
+    b.className = "ball" + (i < MAX_THREADS - S.threads ? " spent" : "");
+    livesEl.appendChild(b);
+  }
+}
+
+/* ---------- movement ---------- */
+function tryMove(d){
+  if (S.mode !== "play" || S.moving) return;
+  const m = S.maze;
+  if (m.at(S.cc, S.cr).w[d]) return;          // a thread is in the way
+  const nc = S.cc + DX[d], nr = S.cr + DY[d];
+  if (nc < 0 || nr < 0 || nc >= m.cols || nr >= m.rows) return;
+  S.tc = nc; S.tr = nr;
+  S.moving = true; S.mt = 0;
+  S.still = 0;
+}
+
+function arrive(){
+  S.cc = S.tc; S.cr = S.tr;
+  S.moving = false;
+  S.px = cellX(S.cc); S.py = cellY(S.cr);
+  S.trail.push({x: S.px, y: S.py});
+  if (S.trail.length > 340) S.trail.shift();
+  S.still = 0;
+  S.visited.add(S.cc + "," + S.cr);
+  paintPct();
+
+  const m = S.maze;
+  const isGoal = (S.cc === m.cols - 1 && S.cr === m.rows - 1);
+  const isStart = (S.cc === 0 && S.cr === 0);
+
+  if (isGoal){ levelClear(); return; }
+
+  if (!isStart && wallCount(m, S.cc, S.cr) === 3){
+    const key = S.cc + "," + S.cr;
+    if (!S.deadSeen.has(key)){
+      S.deadSeen.add(key);
+      S.threads--;
+      S.flash = 1; S.flashColor = "#e8506e";
+      S.shake = 1;
+      S.angryT = ANGRY_DUR;
+      paintHud();
+      if (S.threads <= 0) gameOver("The thread ran out.",
+        "Three dead ends unravelled the last of it. Nothing lost but a little string.");
+    }
+  }
+}
+
+/* ---------- outcomes ---------- */
+function levelClear(){
+  S.mode = "clear";
+  if (S.level >= LEVELS.length - 1){
+    show({
+      emoji: "🧶✨",
+      title: "All nine, unwound.",
+      body: "You threaded every maze without sitting still and without running out of string. The yarn basket is empty and the little purple dot is free.",
+      btn: "Wind it up again",
+      action: () => { S.threads = MAX_THREADS; paintHud(); hide(); startLevel(0); }
+    });
+    S.mode = "win";
+    return;
+  }
+  show({
+    emoji: "🌸",
+    title: "Level " + (S.level + 1) + " unravelled",
+    body: "Neatly done. The next tangle is a little wider — and a little less patient with stillness.",
+    btn: "Next level",
+    action: () => { hide(); startLevel(S.level + 1); }
+  });
+}
+
+function gameOver(title, body){
+  S.mode = "over";
+  show({
+    emoji: "🪡",
+    title: title,
+    body: body,
+    btn: "Try this level again",
+    ghost: "Start from level 1",
+    action: () => { S.threads = MAX_THREADS; paintHud(); hide(); startLevel(S.level); },
+    ghostAction: () => { S.threads = MAX_THREADS; paintHud(); hide(); startLevel(0); }
+  });
+}
+
+/* ---------- overlay plumbing ---------- */
+function show(o){
+  card.innerHTML = "";
+  const e = document.createElement("div"); e.className = "emoji"; e.textContent = o.emoji; card.appendChild(e);
+  const h = document.createElement("h2"); h.textContent = o.title; card.appendChild(h);
+  const p = document.createElement("p"); p.textContent = o.body; card.appendChild(p);
+  if (o.html) card.insertAdjacentHTML("beforeend", o.html);
+  const b = document.createElement("button"); b.textContent = o.btn;
+  b.onclick = o.action; card.appendChild(b);
+  if (o.ghost){
+    const g = document.createElement("button");
+    g.className = "ghost"; g.textContent = o.ghost; g.onclick = o.ghostAction;
+    card.appendChild(g);
+  }
+  overlay.classList.add("on");
+  S.primary = o.action;
+  setTimeout(() => b.focus(), 30);
+}
+function hide(){ overlay.classList.remove("on"); S.primary = null; }
+
+function title(){
+  S.mode = "title";
+  show({
+    emoji: "🧶",
+    title: "Yarnwork",
+    body: "You are the small purple dot. The walls are string. Find the golden ball of yarn in the far corner — nine times over.",
+    html: '<div class="rules">' +
+          '<span>·</span> Move with arrows, WASD, or a swipe.<br>' +
+          '<span>·</span> Don\'t linger — stillness unspools you.<br>' +
+          '<span>·</span> Three dead ends and the thread runs out.' +
+          '</div>',
+    btn: "Pull the thread",
+    action: () => { S.threads = MAX_THREADS; paintHud(); hide(); startLevel(0); }
+  });
+}
+
+/* ============================================================
+   Drawing
+   ============================================================ */
+function drawGoal(g, x, y, cs, t){
+  const pulse = 1 + Math.sin(t * 2.4) * 0.045;
+  const r = cs * 0.30 * pulse;
+
+  g.save();
+  g.shadowColor = "rgba(240,192,74,0.55)";
+  g.shadowBlur = cs * 0.55;
+  const grad = g.createRadialGradient(x - r * 0.32, y - r * 0.36, r * 0.1, x, y, r);
+  grad.addColorStop(0, "#fff4d6");
+  grad.addColorStop(0.45, "#f6d089");
+  grad.addColorStop(1, "#e0a92f");
+  g.fillStyle = grad;
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  g.restore();
+
+  // wound strands
+  g.save();
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.clip();
+  g.strokeStyle = "rgba(190,140,30,0.35)";
+  g.lineWidth = Math.max(1, r * 0.11);
+  for (let i = 0; i < 5; i++){
+    const a = t * 0.25 + i * 0.72;
+    g.beginPath();
+    g.ellipse(x, y, r * (0.95 - i * 0.05), r * (0.34 + i * 0.07), a, 0, Math.PI * 2);
+    g.stroke();
+  }
+  g.restore();
+
+  // loose end
+  g.strokeStyle = "#e0a92f";
+  g.lineWidth = Math.max(1, r * 0.13);
+  g.lineCap = "round";
+  g.beginPath();
+  g.moveTo(x + r * 0.8, y + r * 0.3);
+  g.quadraticCurveTo(x + r * 1.6, y + r * 0.9, x + r * 1.15, y + r * 1.5);
+  g.stroke();
+
+  // sparkles
+  for (let i = 0; i < 3; i++){
+    const a = t * 0.9 + i * 2.1;
+    const rr = r * (1.55 + Math.sin(t * 1.7 + i) * 0.22);
+    const sx = x + Math.cos(a) * rr, sy = y + Math.sin(a) * rr;
+    const s = cs * 0.055 * (0.7 + Math.sin(t * 3 + i * 2) * 0.3);
+    g.fillStyle = "rgba(255,232,160,0.9)";
+    g.beginPath();
+    g.moveTo(sx, sy - s); g.lineTo(sx + s * 0.35, sy); g.lineTo(sx, sy + s); g.lineTo(sx - s * 0.35, sy);
+    g.closePath(); g.fill();
+  }
+}
+
+function mix(a, b, t){
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t)
+  ];
+}
+const rgb  = c => "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+const rgba = (c, a) => "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")";
+
+// happy purple -> cross red
+const C_LIT   = [[230,210,255], [255,224,226]];
+const C_MID   = [[185,140,240], [255,138,155]];
+const C_DEEP  = [[122, 63,201], [214, 44, 76]];
+const C_FACE  = [[ 74, 31,122], [126, 16, 42]];
+
+function drawDot(g, x, y, cs, t, stillFrac, anger){
+  const r = cs * 0.26;
+  const A = Math.max(0, Math.min(1, anger));      // colour / face blend
+  const P = Math.max(0, anger);                   // arm pop, may overshoot
+
+  // stillness ring — a thread winding tighter around you
+  if (stillFrac > 0.02){
+    const a = -Math.PI / 2 + stillFrac * Math.PI * 2;
+    g.save();
+    g.lineCap = "round";
+    g.strokeStyle = stillFrac > 0.65 ? "rgba(232,127,174,0.85)" : "rgba(240,192,74,0.75)";
+    g.lineWidth = cs * 0.075;
+    g.beginPath();
+    g.arc(x, y, r * 1.62, -Math.PI / 2, a);
+    g.stroke();
+    g.restore();
+  }
+
+  const lit  = mix(C_LIT[0],  C_LIT[1],  A);
+  const mid  = mix(C_MID[0],  C_MID[1],  A);
+  const deep = mix(C_DEEP[0], C_DEEP[1], A);
+  const face = mix(C_FACE[0], C_FACE[1], A);
+
+  g.save();
+  // an indignant little tremble, and a puff of outrage
+  g.translate(x + Math.sin(t * 34) * cs * 0.02 * A, y - cs * 0.02 * A);
+  const wob = 1 + Math.sin(t * 4.2) * 0.03 + A * 0.11 + Math.sin(t * 15) * 0.035 * A;
+  const R = r * wob;
+
+  // body
+  g.save();
+  g.shadowColor = rgba(deep, 0.45);
+  g.shadowBlur = cs * 0.5;
+  const grad = g.createRadialGradient(-R * 0.35, -R * 0.4, R * 0.12, 0, 0, R);
+  grad.addColorStop(0, rgb(lit));
+  grad.addColorStop(0.4, rgb(mid));
+  grad.addColorStop(1, rgb(deep));
+  g.fillStyle = grad;
+  g.beginPath(); g.arc(0, 0, R, 0, Math.PI * 2); g.fill();
+  g.restore();
+
+  // shine
+  g.fillStyle = "rgba(255,255,255," + (0.7 - A * 0.25).toFixed(2) + ")";
+  g.beginPath(); g.ellipse(-R * 0.32, -R * 0.36, R * 0.26, R * 0.18, -0.6, 0, Math.PI * 2); g.fill();
+
+  // ---- arms: they pop out and fold, crossly ----
+  if (P > 0.001){
+    const arm = (sx, sy, ex, ey, hx, hy) => {
+      const mx = sx + (ex - sx) * P, my = sy + (ey - sy) * P;
+      const fx = sx + (hx - sx) * P, fy = sy + (hy - sy) * P;
+      g.strokeStyle = rgb(deep);
+      g.lineWidth = R * 0.24;
+      g.lineCap = "round";
+      g.beginPath();
+      g.moveTo(sx * R, sy * R);
+      g.quadraticCurveTo(mx * R, my * R, fx * R, fy * R);
+      g.stroke();
+      g.fillStyle = rgb(mid);
+      g.beginPath(); g.arc(fx * R, fy * R, R * 0.17, 0, Math.PI * 2); g.fill();
+    };
+    // right arm first so the left one folds over the top of it
+    arm( 0.94, -0.02,  1.22, 0.72, -0.40, 0.50);
+    arm(-0.94, -0.02, -1.22, 0.72,  0.40, 0.58);
+  }
+
+  // ---- eyes ----
+  const ey = -0.12 + A * 0.05;
+  const eh = 0.185 - A * 0.055;
+  g.fillStyle = rgb(face);
+  for (const side of [-1, 1]){
+    g.beginPath();
+    g.ellipse(side * R * 0.33, R * ey, R * 0.145, R * eh, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.fillStyle = "rgba(255,255,255," + (0.9 - A * 0.55).toFixed(2) + ")";
+  for (const side of [-1, 1]){
+    g.beginPath();
+    g.arc(side * R * 0.33 - R * 0.05, R * (ey - 0.06), R * 0.055, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  // ---- brows: only when cross ----
+  if (A > 0.01){
+    g.strokeStyle = rgba(face, A);
+    g.lineWidth = R * 0.13;
+    g.lineCap = "round";
+    for (const side of [-1, 1]){
+      g.beginPath();
+      g.moveTo(side * R * 0.58, -R * (0.46 + 0.06 * A));
+      g.lineTo(side * R * 0.13, -R * 0.24);
+      g.stroke();
+    }
+  }
+
+  // ---- mouth: a smile that turns into a pout ----
+  g.lineCap = "round";
+  g.lineWidth = R * 0.11;
+  if (A < 0.99){
+    g.strokeStyle = rgba(face, 1 - A);
+    g.beginPath();
+    g.arc(0, R * 0.02, R * 0.40, Math.PI * 0.22, Math.PI * 0.78);
+    g.stroke();
+  }
+  if (A > 0.01){
+    g.strokeStyle = rgba(face, A);
+    g.beginPath();
+    g.arc(0, R * 0.54, R * 0.27, Math.PI * 1.22, Math.PI * 1.78);
+    g.stroke();
+  }
+
+  // ---- the little anger mark ----
+  if (A > 0.02){
+    const s = R * 0.34 * (0.7 + Math.sin(t * 12) * 0.12);
+    const ax = R * 0.92, ay = -R * 0.92;
+    g.strokeStyle = "rgba(226,48,80," + A.toFixed(2) + ")";
+    g.lineWidth = R * 0.10;
+    g.beginPath();
+    g.moveTo(ax - s * 0.55, ay - s * 0.10); g.lineTo(ax - s * 0.05, ay - s * 0.60);
+    g.moveTo(ax - s * 0.05, ay - s * 0.60); g.lineTo(ax - s * 0.05, ay - s * 0.05);
+    g.moveTo(ax + s * 0.05, ay + s * 0.05); g.lineTo(ax + s * 0.05, ay + s * 0.60);
+    g.moveTo(ax + s * 0.05, ay + s * 0.60); g.lineTo(ax + s * 0.55, ay + s * 0.10);
+    g.stroke();
+  }
+
+  g.restore();
+}
+
+function draw(){
+  const w = stage.clientWidth, h = stage.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+  if (!S.maze) return;
+
+  ctx.save();
+  if (S.shake > 0){
+    const k = S.shake * 6;
+    ctx.translate((Math.random() - 0.5) * k, (Math.random() - 0.5) * k);
+  }
+
+  const cs = S.cs;
+
+  // the cloth the maze sits on
+  ctx.save();
+  ctx.shadowColor = "rgba(180,130,190,0.16)";
+  ctx.shadowBlur = 30;
+  ctx.shadowOffsetY = 8;
+  ctx.fillStyle = "#fffdfe";
+  roundRect(ctx, S.ox - cs * 0.35, S.oy - cs * 0.35,
+            cs * S.maze.cols + cs * 0.7, cs * S.maze.rows + cs * 0.7, cs * 0.35);
+  ctx.fill();
+  ctx.restore();
+
+  // start nook
+  ctx.fillStyle = "rgba(244,169,200,0.16)";
+  ctx.beginPath(); ctx.arc(cellX(0), cellY(0), cs * 0.32, 0, Math.PI * 2); ctx.fill();
+
+  // dead ends already charged — a small frayed mark
+  ctx.save();
+  ctx.strokeStyle = "rgba(232,127,174,0.5)";
+  ctx.lineWidth = Math.max(1.2, cs * 0.055);
+  ctx.lineCap = "round";
+  S.deadSeen.forEach(k => {
+    const [c, r] = k.split(",").map(Number);
+    const x = cellX(c), y = cellY(r), s = cs * 0.15;
+    ctx.beginPath(); ctx.moveTo(x - s, y - s); ctx.lineTo(x + s, y + s);
+    ctx.moveTo(x + s, y - s); ctx.lineTo(x - s, y + s); ctx.stroke();
+  });
+  ctx.restore();
+
+  // the trail you've left behind
+  if (S.trail.length > 1){
+    ctx.save();
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgba(185,140,240,0.30)";
+    ctx.lineWidth = cs * 0.10;
+    ctx.beginPath();
+    ctx.moveTo(S.trail[0].x, S.trail[0].y);
+    for (let i = 1; i < S.trail.length; i++) ctx.lineTo(S.trail[i].x, S.trail[i].y);
+    ctx.lineTo(S.px, S.py);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // the goal, under the threads
+  drawGoal(ctx, cellX(S.maze.cols - 1), cellY(S.maze.rows - 1), cs, S.t);
+
+  // the yarn itself
+  if (S.fabric){
+    ctx.drawImage(S.fabric, S.ox - S.fabricB, S.oy - S.fabricB, S.fabricW, S.fabricH);
+  }
+
+  drawDot(ctx, S.px, S.py, cs, S.t, Math.min(1, S.still / S.stillMax), angerNow());
+
+  // dead-end flash
+  if (S.flash > 0){
+    ctx.fillStyle = "rgba(232,80,110," + (S.flash * 0.16).toFixed(3) + ")";
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  ctx.restore();
+}
+
+function roundRect(g, x, y, w, h, r){
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+/* ============================================================
+   Loop
+   ============================================================ */
+// 0 while content; springs past 1 as the arms fly out, then settles and fades
+function angerNow(){
+  if (S.angryT <= 0) return 0;
+  const el = ANGRY_DUR - S.angryT;
+  const p = Math.min(1, el / 0.18);
+  const q = p - 1;
+  const pop = 1 + 2.4 * q * q * q + 1.4 * q * q;   // ease-out-back
+  return Math.min(pop, Math.min(1, S.angryT / 0.45));
+}
+
+let last = performance.now();
+function frame(now){
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  S.t += dt;
+  if (S.flash > 0) S.flash = Math.max(0, S.flash - dt * 1.6);
+  if (S.angryT > 0) S.angryT = Math.max(0, S.angryT - dt);
+  if (S.shake > 0) S.shake = Math.max(0, S.shake - dt * 3.2);
+
+  if (S.mode === "play"){
+    if (S.moving){
+      S.mt += dt / MOVE_TIME;
+      if (S.mt >= 1){ arrive(); }
+      else {
+        const e = S.mt < 0.5 ? 2 * S.mt * S.mt : 1 - Math.pow(-2 * S.mt + 2, 2) / 2;
+        S.px = cellX(S.cc) + (cellX(S.tc) - cellX(S.cc)) * e;
+        S.py = cellY(S.cr) + (cellY(S.tr) - cellY(S.cr)) * e;
+      }
+    } else {
+      for (let d = 0; d < 4; d++) if (held[d]){ tryMove(d); break; }
+    }
+
+    if (!S.moving){
+      S.still += dt;
+      if (S.still >= S.stillMax){
+        gameOver("You sat too long.",
+          "The yarn wound itself around you while you were thinking. Keep drifting next time — even a wrong turn beats standing still.");
+      }
+    }
+
+    const frac = Math.min(1, S.still / S.stillMax);
+    stillfill.style.width = (frac * 100).toFixed(1) + "%";
+    stillbar.classList.toggle("warn", frac > 0.65);
+  }
+
+  draw();
+  requestAnimationFrame(frame);
+}
+
+/* ============================================================
+   Input
+   ============================================================ */
+const KEYMAP = {
+  ArrowUp: 0, KeyW: 0,
+  ArrowRight: 1, KeyD: 1,
+  ArrowDown: 2, KeyS: 2,
+  ArrowLeft: 3, KeyA: 3
+};
+
+window.addEventListener("keydown", e => {
+  if (S.mode !== "play"){
+    if ((e.code === "Enter" || e.code === "Space") && S.primary){ e.preventDefault(); S.primary(); }
+    return;
+  }
+  const d = KEYMAP[e.code];
+  if (d === undefined) return;
+  e.preventDefault();
+  held[d] = true;
+  tryMove(d);
+});
+window.addEventListener("keyup", e => {
+  const d = KEYMAP[e.code];
+  if (d !== undefined) held[d] = false;
+});
+window.addEventListener("blur", () => { for (const k in held) held[k] = false; });
+
+// swipe
+let tsx = 0, tsy = 0, tActive = false;
+stage.addEventListener("touchstart", e => {
+  const t = e.changedTouches[0]; tsx = t.clientX; tsy = t.clientY; tActive = true;
+}, {passive: true});
+stage.addEventListener("touchmove", e => {
+  if (!tActive || S.mode !== "play") return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - tsx, dy = t.clientY - tsy;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 26) return;
+  const d = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
+  tryMove(d);
+  tsx = t.clientX; tsy = t.clientY;
+}, {passive: true});
+stage.addEventListener("touchend", () => { tActive = false; }, {passive: true});
+
+window.addEventListener("resize", () => { layout(); });
+
+/* ============================================================
+   Go
+   ============================================================ */
+S.maze = genMaze(LEVELS[0].c, LEVELS[0].r, mulberry32(20260901));
+S.threads = MAX_THREADS;
+paintHud();
+layout();
+S.px = cellX(0); S.py = cellY(0);
+title();
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
