@@ -40,7 +40,7 @@
   header{
     flex:0 0 auto;
     padding:14px 18px 10px;
-    display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+    display:flex; align-items:center; gap:16px; row-gap:9px; flex-wrap:wrap;
   }
   .brand{display:flex; align-items:baseline; gap:10px; margin-right:auto}
   .brand h1{
@@ -88,6 +88,25 @@
     font-size:12px; font-weight:600; color:var(--purple-deep);
     min-width:38px; text-align:right; font-variant-numeric:tabular-nums;
   }
+
+  .timechip{
+    font-size:13px; font-weight:600; color:var(--blue-deep);
+    font-variant-numeric:tabular-nums; letter-spacing:.04em;
+    background:rgba(255,255,255,.8); border:1px solid #d8e5f8;
+    border-radius:99px; padding:5px 13px;
+  }
+
+  .fxrow{display:flex; gap:7px}
+  .fxchip{
+    display:flex; align-items:center; gap:5px;
+    font-size:12px; font-weight:600; font-variant-numeric:tabular-nums;
+    background:#fff; border:1px solid #d9f0ec; color:#0f8f80;
+    border-radius:99px; padding:4px 11px;
+    box-shadow:0 3px 10px rgba(20,184,166,.18);
+    animation:fxin .3s cubic-bezier(.2,1.5,.5,1);
+  }
+  .fxchip b{font-size:13px; font-weight:400}
+  @keyframes fxin{from{transform:scale(.6); opacity:0}}
 
   .levelchip{
     font-size:12px; letter-spacing:.14em; text-transform:uppercase;
@@ -150,8 +169,9 @@
 
   @media (max-width:560px){
     .brand .sub{display:none}
-    .stillbar{width:84px}
-    .pctbar{width:70px}
+    .stillbar{width:70px}
+    .pctbar{width:58px}
+    .gauge .label{display:none}
     .card{padding:30px 26px; margin:16px}
   }
 </style>
@@ -170,7 +190,7 @@
   </div>
 
   <div class="gauge">
-    <span class="label">Explored</span>
+    <span class="label">Progress</span>
     <div class="pctbar"><i id="pctfill"></i></div>
     <span class="pcttext" id="pcttext">0%</span>
   </div>
@@ -180,7 +200,11 @@
     <div class="lives" id="lives"></div>
   </div>
 
-  <div class="levelchip" id="levelchip">Level 1 / 9</div>
+  <div class="fxrow" id="fxrow"></div>
+
+  <div class="timechip" id="timechip">0:00.0</div>
+
+  <div class="levelchip" id="levelchip">Level 1 / 11</div>
 </header>
 
 <div id="stage">
@@ -228,7 +252,9 @@ const LEVELS = [
   {c: 17, r: 11, still: 5.6},
   {c: 19, r: 12, still: 5.2},
   {c: 21, r: 13, still: 4.8},
-  {c: 23, r: 14, still: 4.4}
+  {c: 23, r: 14, still: 4.4},
+  {c: 25, r: 15, still: 4.1},
+  {c: 27, r: 16, still: 3.8}
 ];
 
 /* ============================================================
@@ -385,10 +411,22 @@ const stillfill = document.getElementById("stillfill");
 const levelchip = document.getElementById("levelchip");
 const pctfill = document.getElementById("pctfill");
 const pcttext = document.getElementById("pcttext");
+const timechip = document.getElementById("timechip");
+const fxrow = document.getElementById("fxrow");
 
 const MOVE_TIME = 0.125;   // seconds per cell
+const moveTime = () => MOVE_TIME * (S.fx.haste > 0 ? 0.58 : 1);
 const MAX_THREADS = 3;
 const ANGRY_DUR = 1.6;     // how long the dot stays cross about a dead end
+const CHEER_DUR = 1.7;     // confetti time before the level card appears
+
+// what the little treasures in the maze do
+const CHARMS = {
+  scissors: {icon: "\u2702\uFE0F", name: "Scissors",     note: "Stillness snipped \u2014 the meter crawls",  dur: 13},
+  spool:    {icon: "\uD83E\uDDF5", name: "Spool",        note: "A thread mended",                            dur: 5},
+  beacon:   {icon: "\u2728",        name: "Glimmer",      note: "The way ahead lights up",                    dur: 6},
+  shuttle:  {icon: "\u26A1",        name: "Shuttle",      note: "Quick feet",                                 dur: 9}
+};
 
 let S = {
   mode: "title",       // title | play | clear | over | win
@@ -403,7 +441,17 @@ let S = {
   still: 0, stillMax: 8,
   threads: MAX_THREADS,
   deadSeen: new Set(),  // dead ends already charged
-  visited: new Set(),   // every cell stepped on, for the explored %
+  visited: new Set(),   // every cell stepped on
+  path: [],             // the one true route, start -> goal
+  pathIdx: null,        // "c,r" -> position along that route
+  onPath: new Set(),    // route cells actually walked, for the progress %
+  charms: null,         // "c,r" -> charm type
+  fx: {slow: 0, freeze: 0, haste: 0, beacon: 0},
+  toasts: [],
+  confetti: [],
+  joy: 0,               // 0 purple, 1 delighted green
+  cheerT: 0,
+  levelT: 0, totalT: 0, lastLevelT: 0,
   angryT: 0,            // countdown on the arms-crossed sulk
   trail: [],
   flash: 0, flashColor: "#e87fae",
@@ -489,6 +537,67 @@ function weaveFabric(){
   S.fabricB = B;
 }
 
+/* ---------- the one true route, by breadth-first search ---------- */
+function solve(m){
+  const key = (c, r) => c + "," + r;
+  const prev = new Map([[key(0, 0), null]]);
+  const q = [[0, 0]];
+  const goal = key(m.cols - 1, m.rows - 1);
+  while (q.length){
+    const [c, r] = q.shift();
+    if (key(c, r) === goal) break;
+    for (let d = 0; d < 4; d++){
+      if (m.at(c, r).w[d]) continue;
+      const nc = c + DX[d], nr = r + DY[d];
+      if (nc < 0 || nr < 0 || nc >= m.cols || nr >= m.rows) continue;
+      const k = key(nc, nr);
+      if (prev.has(k)) continue;
+      prev.set(k, key(c, r));
+      q.push([nc, nr]);
+    }
+  }
+  const path = [];
+  for (let k = goal; k != null; k = prev.get(k)) path.push(k);
+  path.reverse();
+  const idx = new Map();
+  path.forEach((k, i) => idx.set(k, i));
+  return {path, idx};
+}
+
+/* ---------- scatter the charms ---------- */
+function scatterCharms(m, path, rnd, level){
+  const onPath = new Set(path);
+  const goal = (m.cols - 1) + "," + (m.rows - 1);
+  const near = [], far = [];
+  for (let r = 0; r < m.rows; r++){
+    for (let c = 0; c < m.cols; c++){
+      const k = c + "," + r;
+      if (k === "0,0" || k === goal) continue;
+      (onPath.has(k) ? near : far).push(k);
+    }
+  }
+  const shuffle = a => {
+    for (let i = a.length - 1; i > 0; i--){
+      const j = Math.floor(rnd() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+  shuffle(near); shuffle(far);
+
+  const total = 2 + Math.floor(level * 0.55);        // 2 on level 1, 8 on level 11
+  const onRoute = Math.max(1, Math.round(total * 0.55));
+  const picks = near.slice(0, onRoute).concat(far.slice(0, total - onRoute));
+
+  // scissors are the staple; the rest are the surprises
+  const bag = ["scissors", "scissors", "shuttle", "beacon", "spool"];
+  const charms = new Map();
+  picks.forEach((k, i) => {
+    charms.set(k, i === 0 ? "scissors" : bag[Math.floor(rnd() * bag.length)]);
+  });
+  return charms;
+}
+
 /* ---------- level setup ---------- */
 function startLevel(n){
   S.level = n;
@@ -501,6 +610,16 @@ function startLevel(n){
   S.moving = false; S.mt = 0;
   S.deadSeen = new Set();
   S.visited = new Set(["0,0"]);
+  const sol = solve(S.maze);
+  S.path = sol.path;
+  S.pathIdx = sol.idx;
+  S.onPath = new Set(["0,0"]);
+  S.charms = scatterCharms(S.maze, sol.path, mulberry32(555 + n * 8887), n);
+  S.fx = {slow: 0, freeze: 0, haste: 0, beacon: 0};
+  S.toasts = [];
+  S.confetti = [];
+  S.joy = 0; S.cheerT = 0;
+  S.levelT = 0;
   S.angryT = 0;
   S.trail = [];
   S.flash = 0;
@@ -511,17 +630,44 @@ function startLevel(n){
   S.trail.push({x: S.px, y: S.py});
   paintHud();
   paintPct();
+  paintFx();
 }
 
 function paintPct(){
-  const total = S.maze.cols * S.maze.rows;
-  const pct = S.visited.size / total * 100;
+  // only the true route counts — wandering off it earns nothing
+  const pct = S.onPath.size / S.path.length * 100;
   pctfill.style.width = pct.toFixed(2) + "%";
   pcttext.textContent = Math.round(pct) + "%";
 }
 
+function fmtTime(sec){
+  const m = Math.floor(sec / 60);
+  const r = sec - m * 60;
+  return m + ":" + (r < 10 ? "0" : "") + r.toFixed(1);
+}
+
+function paintFx(){
+  const parts = [];
+  if (S.fx.slow > 0)   parts.push(["\u2702\uFE0F", S.fx.slow]);
+  if (S.fx.freeze > 0) parts.push(["\uD83E\uDDF5", S.fx.freeze]);
+  if (S.fx.haste > 0)  parts.push(["\u26A1", S.fx.haste]);
+  if (S.fx.beacon > 0) parts.push(["\u2728", S.fx.beacon]);
+  const sig = parts.map(p => p[0] + Math.ceil(p[1])).join("|");
+  if (sig === S.fxSig) return;
+  S.fxSig = sig;
+  fxrow.innerHTML = "";
+  parts.forEach(([icon, left]) => {
+    const el = document.createElement("div");
+    el.className = "fxchip";
+    el.innerHTML = "<b></b><span></span>";
+    el.firstChild.textContent = icon;
+    el.lastChild.textContent = Math.ceil(left) + "s";
+    fxrow.appendChild(el);
+  });
+}
+
 function paintHud(){
-  levelchip.textContent = "Level " + (S.level + 1) + " / 9";
+  levelchip.textContent = "Level " + (S.level + 1) + " / " + LEVELS.length;
   livesEl.innerHTML = "";
   for (let i = 0; i < MAX_THREADS; i++){
     const b = document.createElement("div");
@@ -549,8 +695,12 @@ function arrive(){
   S.trail.push({x: S.px, y: S.py});
   if (S.trail.length > 340) S.trail.shift();
   S.still = 0;
-  S.visited.add(S.cc + "," + S.cr);
+  const here = S.cc + "," + S.cr;
+  S.visited.add(here);
+  if (S.pathIdx.has(here)) S.onPath.add(here);
   paintPct();
+
+  if (S.charms.has(here)) takeCharm(here);
 
   const m = S.maze;
   const isGoal = (S.cc === m.cols - 1 && S.cr === m.rows - 1);
@@ -573,24 +723,127 @@ function arrive(){
   }
 }
 
+/* ---------- charms ---------- */
+function takeCharm(key){
+  const type = S.charms.get(key);
+  S.charms.delete(key);
+  const C = CHARMS[type];
+  let note = C.note;
+
+  if (type === "scissors")     S.fx.slow += C.dur;
+  else if (type === "shuttle") S.fx.haste += C.dur;
+  else if (type === "beacon")  S.fx.beacon += C.dur;
+  else if (type === "spool"){
+    if (S.threads < MAX_THREADS){ S.threads++; paintHud(); }
+    else { S.fx.freeze += C.dur; note = "Stillness held at bay"; }
+  }
+  S.toasts.push({x: S.px, y: S.py, text: C.icon + "  " + note, t: 0});
+  paintFx();
+}
+
 /* ---------- outcomes ---------- */
+const TEALS = ["#14b8a6", "#2dd4bf", "#5eead4", "#99f6e4", "#0d9488", "#6ee7d7", "#0f766e"];
+
+function mkConfetti(x, y, vx, vy, delay){
+  return {
+    x: x, y: y, vx: vx, vy: vy, delay: delay,
+    rot: Math.random() * 6.283, vrot: (Math.random() - 0.5) * 9,
+    w: 5 + Math.random() * 8, h: 8 + Math.random() * 13,
+    color: TEALS[Math.floor(Math.random() * TEALS.length)],
+    ribbon: Math.random() < 0.35,
+    life: 3.6 + Math.random() * 2.6, age: 0
+  };
+}
+
+function burstConfetti(){
+  const w = stage.clientWidth, h = stage.clientHeight;
+  const gx = cellX(S.maze.cols - 1), gy = cellY(S.maze.rows - 1);
+  // a pop out of the golden ball...
+  for (let i = 0; i < 80; i++){
+    const a = Math.random() * Math.PI * 2;
+    const sp = 130 + Math.random() * 430;
+    S.confetti.push(mkConfetti(gx, gy, Math.cos(a) * sp, Math.sin(a) * sp - 200, 0));
+  }
+  // ...then the whole screen comes down in teal
+  for (let i = 0; i < 170; i++){
+    S.confetti.push(mkConfetti(
+      Math.random() * w, -30 - Math.random() * h * 1.1,
+      (Math.random() - 0.5) * 100, 60 + Math.random() * 150,
+      Math.random() * 0.55));
+  }
+}
+
+function stepConfetti(dt){
+  const h = stage.clientHeight;
+  for (let i = S.confetti.length - 1; i >= 0; i--){
+    const p = S.confetti[i];
+    if (p.delay > 0){ p.delay -= dt; continue; }
+    p.age += dt;
+    p.vy += 540 * dt;
+    p.vy *= 1 - 1.15 * dt;
+    p.vx *= 1 - 1.35 * dt;
+    p.x += (p.vx + Math.sin(p.age * 5 + p.rot) * 38) * dt;
+    p.y += p.vy * dt;
+    p.rot += p.vrot * dt;
+    if (p.y > h + 50 || p.age > p.life) S.confetti.splice(i, 1);
+  }
+}
+
+function drawConfetti(g){
+  for (const p of S.confetti){
+    if (p.delay > 0) continue;
+    const fade = Math.min(1, (p.life - p.age) / 0.9);
+    if (fade <= 0) continue;
+    g.save();
+    g.globalAlpha = fade;
+    g.translate(p.x, p.y);
+    g.rotate(p.rot);
+    g.fillStyle = p.color;
+    if (p.ribbon){
+      g.beginPath();
+      g.moveTo(-p.w * 0.5, -p.h * 0.5);
+      g.quadraticCurveTo(p.w * 0.7, 0, -p.w * 0.5, p.h * 0.5);
+      g.quadraticCurveTo(p.w * 0.05, 0, -p.w * 0.5, -p.h * 0.5);
+      g.fill();
+    } else {
+      g.scale(1, Math.max(0.22, Math.abs(Math.cos(p.age * 7))));
+      g.fillRect(-p.w * 0.5, -p.h * 0.5, p.w, p.h);
+    }
+    g.restore();
+  }
+}
+
 function levelClear(){
-  S.mode = "clear";
+  S.mode = "cheer";
+  S.cheerT = 0;
+  S.lastLevelT = S.levelT;
+  S.totalT += S.levelT;
+  S.onPath = new Set(S.path);     // you're through: the route is complete
+  paintPct();
+  burstConfetti();
+}
+
+function showClearCard(){
   if (S.level >= LEVELS.length - 1){
-    show({
-      emoji: "🧶✨",
-      title: "All nine, unwound.",
-      body: "You threaded every maze without sitting still and without running out of string. The yarn basket is empty and the little purple dot is free.",
-      btn: "Wind it up again",
-      action: () => { S.threads = MAX_THREADS; paintHud(); hide(); startLevel(0); }
-    });
     S.mode = "win";
+    show({
+      emoji: "\uD83E\uDDF6\u2728",
+      title: "All eleven, unwound.",
+      body: "You threaded every maze without sitting still and without running out of string. The yarn basket is empty and the little dot is free.",
+      html: '<div class="rules">Last level <span>' + fmtTime(S.lastLevelT) +
+            '</span><br>All eleven <span>' + fmtTime(S.totalT) + '</span></div>',
+      btn: "Wind it up again",
+      action: () => { S.threads = MAX_THREADS; S.totalT = 0; paintHud(); hide(); startLevel(0); }
+    });
     return;
   }
+  S.mode = "clear";
   show({
-    emoji: "🌸",
+    emoji: "\uD83C\uDF38",
     title: "Level " + (S.level + 1) + " unravelled",
-    body: "Neatly done. The next tangle is a little wider — and a little less patient with stillness.",
+    body: "Neatly done. The next tangle is a little wider \u2014 and a little less patient with stillness.",
+    html: '<div class="rules">This level <span>' + fmtTime(S.lastLevelT) +
+          '</span><br>Running total <span>' + fmtTime(S.totalT) + '</span></div>',
     btn: "Next level",
     action: () => { hide(); startLevel(S.level + 1); }
   });
@@ -605,7 +858,7 @@ function gameOver(title, body){
     btn: "Try this level again",
     ghost: "Start from level 1",
     action: () => { S.threads = MAX_THREADS; paintHud(); hide(); startLevel(S.level); },
-    ghostAction: () => { S.threads = MAX_THREADS; paintHud(); hide(); startLevel(0); }
+    ghostAction: () => { S.threads = MAX_THREADS; S.totalT = 0; paintHud(); hide(); startLevel(0); }
   });
 }
 
@@ -634,14 +887,14 @@ function title(){
   show({
     emoji: "🧶",
     title: "Yarnwork",
-    body: "You are the small purple dot. The walls are string. Find the golden ball of yarn in the far corner — nine times over.",
+    body: "You are the small purple dot. The walls are string. Find the golden ball of yarn in the far corner — eleven times over.",
     html: '<div class="rules">' +
           '<span>·</span> Move with arrows, WASD, or a swipe.<br>' +
           '<span>·</span> Don\'t linger — stillness unspools you.<br>' +
-          '<span>·</span> Three dead ends and the thread runs out.' +
+          '<span>·</span> Three dead ends and the thread runs out.<br><span>·</span> Pick up the charms you pass — scissors slow the meter.' +
           '</div>',
     btn: "Pull the thread",
-    action: () => { S.threads = MAX_THREADS; paintHud(); hide(); startLevel(0); }
+    action: () => { S.threads = MAX_THREADS; S.totalT = 0; paintHud(); hide(); startLevel(0); }
   });
 }
 
@@ -713,8 +966,140 @@ const C_LIT   = [[230,210,255], [255,224,226]];
 const C_MID   = [[185,140,240], [255,138,155]];
 const C_DEEP  = [[122, 63,201], [214, 44, 76]];
 const C_FACE  = [[ 74, 31,122], [126, 16, 42]];
+// ...and the green it turns when it finds the gold
+const C_JOY   = [[222,255,232], [ 96,222,150], [ 20,142, 92], [ 12, 82, 54]];
 
-function drawDot(g, x, y, cs, t, stillFrac, anger){
+function drawCharm(g, x, y, cs, type, t){
+  const U = cs * 0.40;
+  const bob = Math.sin(t * 2.6 + x * 0.03) * cs * 0.045;
+  g.save();
+  g.translate(x, y + bob);
+
+  const tint = type === "scissors" ? "180,190,210"
+             : type === "spool"    ? "244,169,200"
+             : type === "beacon"   ? "240,192,74"
+             :                       "125,227,211";
+  const halo = g.createRadialGradient(0, 0, U * 0.2, 0, 0, U * 1.5);
+  halo.addColorStop(0, "rgba(" + tint + ",0.42)");
+  halo.addColorStop(1, "rgba(" + tint + ",0)");
+  g.fillStyle = halo;
+  g.beginPath(); g.arc(0, 0, U * 1.5, 0, Math.PI * 2); g.fill();
+
+  g.lineCap = "round";
+  g.lineJoin = "round";
+
+  if (type === "scissors"){
+    g.strokeStyle = "#8f9bb3";
+    g.lineWidth = U * 0.15;
+    g.beginPath();
+    g.moveTo(-U * 0.46, U * 0.34); g.lineTo(U * 0.42, -U * 0.62);
+    g.moveTo(U * 0.46, U * 0.34);  g.lineTo(-U * 0.42, -U * 0.62);
+    g.stroke();
+    g.strokeStyle = "#e87fae";
+    g.lineWidth = U * 0.13;
+    g.beginPath(); g.arc(-U * 0.54, U * 0.58, U * 0.24, 0, Math.PI * 2);
+    g.arc(U * 0.54, U * 0.58, U * 0.24, 0, Math.PI * 2);
+    g.stroke();
+    g.fillStyle = "#6f7c95";
+    g.beginPath(); g.arc(0, U * 0.05, U * 0.11, 0, Math.PI * 2); g.fill();
+
+  } else if (type === "spool"){
+    g.fillStyle = "#f6d089";
+    roundRect(g, -U * 0.52, -U * 0.66, U * 1.04, U * 0.20, U * 0.08); g.fill();
+    roundRect(g, -U * 0.52, U * 0.46, U * 1.04, U * 0.20, U * 0.08); g.fill();
+    g.fillStyle = "#f4a9c8";
+    g.fillRect(-U * 0.34, -U * 0.5, U * 0.68, U * 1.0);
+    g.strokeStyle = "rgba(255,255,255,0.65)";
+    g.lineWidth = U * 0.07;
+    for (let i = -2; i <= 2; i++){
+      g.beginPath();
+      g.moveTo(-U * 0.34, U * i * 0.19);
+      g.lineTo(U * 0.34, U * i * 0.19 + U * 0.1);
+      g.stroke();
+    }
+
+  } else if (type === "beacon"){
+    const pl = 1 + Math.sin(t * 5) * 0.1;
+    g.fillStyle = "#f6d089";
+    g.beginPath();
+    for (let i = 0; i < 4; i++){
+      const a = i * Math.PI / 2;
+      const bx = Math.cos(a), by = Math.sin(a);
+      const nx = -by, ny = bx;
+      g.lineTo(bx * U * 0.9 * pl, by * U * 0.9 * pl);
+      g.quadraticCurveTo(0, 0, nx * -U * 0.9 * pl, ny * -U * 0.9 * pl);
+    }
+    g.closePath(); g.fill();
+    g.fillStyle = "#fff6dd";
+    g.beginPath(); g.arc(0, 0, U * 0.2, 0, Math.PI * 2); g.fill();
+
+  } else { // shuttle — a pointed weaving shuttle with thread wound round it
+    g.fillStyle = "#7de3d3";
+    g.beginPath();
+    g.moveTo(-U * 0.85, 0);
+    g.quadraticCurveTo(0, -U * 0.52, U * 0.85, 0);
+    g.quadraticCurveTo(0, U * 0.52, -U * 0.85, 0);
+    g.fill();
+    g.strokeStyle = "#0f8f80";
+    g.lineWidth = U * 0.11;
+    g.beginPath();
+    g.moveTo(-U * 0.22, -U * 0.27); g.lineTo(-U * 0.22, U * 0.27);
+    g.moveTo(U * 0.22, -U * 0.27);  g.lineTo(U * 0.22, U * 0.27);
+    g.stroke();
+    g.strokeStyle = "#f4a9c8";
+    g.lineWidth = U * 0.13;
+    g.beginPath(); g.moveTo(-U * 0.22, 0); g.lineTo(U * 0.22, 0); g.stroke();
+  }
+  g.restore();
+}
+
+function drawBeacon(g, cs, t){
+  const from = S.pathIdx.get(S.cc + "," + S.cr);
+  if (from == null) return;                    // you've strayed off the route
+  g.save();
+  g.lineCap = "round";
+  g.lineJoin = "round";
+  g.strokeStyle = "rgba(240,192,74," + (0.45 + Math.sin(t * 4) * 0.16).toFixed(3) + ")";
+  g.lineWidth = cs * 0.13;
+  g.setLineDash([cs * 0.22, cs * 0.26]);
+  g.lineDashOffset = -t * cs * 0.9;
+  g.shadowColor = "rgba(240,192,74,0.55)";
+  g.shadowBlur = cs * 0.4;
+  g.beginPath();
+  for (let i = from; i < S.path.length; i++){
+    const [c, r] = S.path[i].split(",").map(Number);
+    const px = cellX(c), py = cellY(r);
+    if (i === from) g.moveTo(px, py); else g.lineTo(px, py);
+  }
+  g.stroke();
+  g.restore();
+}
+
+function drawToasts(g, cs){
+  for (const o of S.toasts){
+    const a = Math.min(1, o.t / 0.18) * Math.min(1, (1.9 - o.t) / 0.5);
+    if (a <= 0) continue;
+    g.save();
+    g.globalAlpha = a;
+    g.font = "600 " + Math.max(11, Math.round(cs * 0.34)) + "px 'Avenir Next', 'Segoe UI', sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    const y = o.y - cs * 0.7 - o.t * cs * 0.5;
+    const w = g.measureText(o.text).width + cs * 0.42;
+    const h = cs * 0.62;
+    g.fillStyle = "rgba(255,255,255,0.94)";
+    g.shadowColor = "rgba(70,100,170,0.22)";
+    g.shadowBlur = 12;
+    roundRect(g, o.x - w / 2, y - h / 2, w, h, h / 2);
+    g.fill();
+    g.shadowBlur = 0;
+    g.fillStyle = "#0f8f80";
+    g.fillText(o.text, o.x, y);
+    g.restore();
+  }
+}
+
+function drawDot(g, x, y, cs, t, stillFrac, anger, joy){
   const r = cs * 0.26;
   const A = Math.max(0, Math.min(1, anger));      // colour / face blend
   const P = Math.max(0, anger);                   // arm pop, may overshoot
@@ -732,15 +1117,17 @@ function drawDot(g, x, y, cs, t, stillFrac, anger){
     g.restore();
   }
 
-  const lit  = mix(C_LIT[0],  C_LIT[1],  A);
-  const mid  = mix(C_MID[0],  C_MID[1],  A);
-  const deep = mix(C_DEEP[0], C_DEEP[1], A);
-  const face = mix(C_FACE[0], C_FACE[1], A);
+  const J = Math.max(0, Math.min(1, joy || 0));
+  const lit  = mix(mix(C_LIT[0],  C_LIT[1],  A), C_JOY[0], J);
+  const mid  = mix(mix(C_MID[0],  C_MID[1],  A), C_JOY[1], J);
+  const deep = mix(mix(C_DEEP[0], C_DEEP[1], A), C_JOY[2], J);
+  const face = mix(mix(C_FACE[0], C_FACE[1], A), C_JOY[3], J);
 
   g.save();
   // an indignant little tremble, and a puff of outrage
   g.translate(x + Math.sin(t * 34) * cs * 0.02 * A, y - cs * 0.02 * A);
-  const wob = 1 + Math.sin(t * 4.2) * 0.03 + A * 0.11 + Math.sin(t * 15) * 0.035 * A;
+  const wob = 1 + Math.sin(t * 4.2) * 0.03 + A * 0.11 + Math.sin(t * 15) * 0.035 * A
+                + J * (0.10 + Math.abs(Math.sin(t * 6)) * 0.09);   // a delighted little hop
   const R = r * wob;
 
   // body
@@ -782,17 +1169,29 @@ function drawDot(g, x, y, cs, t, stillFrac, anger){
   // ---- eyes ----
   const ey = -0.12 + A * 0.05;
   const eh = 0.185 - A * 0.055;
-  g.fillStyle = rgb(face);
-  for (const side of [-1, 1]){
-    g.beginPath();
-    g.ellipse(side * R * 0.33, R * ey, R * 0.145, R * eh, 0, 0, Math.PI * 2);
-    g.fill();
-  }
-  g.fillStyle = "rgba(255,255,255," + (0.9 - A * 0.55).toFixed(2) + ")";
-  for (const side of [-1, 1]){
-    g.beginPath();
-    g.arc(side * R * 0.33 - R * 0.05, R * (ey - 0.06), R * 0.055, 0, Math.PI * 2);
-    g.fill();
+  if (J > 0.45){
+    // squeezed-shut happy eyes
+    g.strokeStyle = rgb(face);
+    g.lineWidth = R * 0.11;
+    g.lineCap = "round";
+    for (const side of [-1, 1]){
+      g.beginPath();
+      g.arc(side * R * 0.33, R * 0.02, R * 0.20, Math.PI * 1.15, Math.PI * 1.85);
+      g.stroke();
+    }
+  } else {
+    g.fillStyle = rgb(face);
+    for (const side of [-1, 1]){
+      g.beginPath();
+      g.ellipse(side * R * 0.33, R * ey, R * 0.145, R * eh, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = "rgba(255,255,255," + (0.9 - A * 0.55).toFixed(2) + ")";
+    for (const side of [-1, 1]){
+      g.beginPath();
+      g.arc(side * R * 0.33 - R * 0.05, R * (ey - 0.06), R * 0.055, 0, Math.PI * 2);
+      g.fill();
+    }
   }
 
   // ---- brows: only when cross ----
@@ -813,8 +1212,10 @@ function drawDot(g, x, y, cs, t, stillFrac, anger){
   g.lineWidth = R * 0.11;
   if (A < 0.99){
     g.strokeStyle = rgba(face, 1 - A);
+    g.lineWidth = R * (0.11 + J * 0.03);
     g.beginPath();
-    g.arc(0, R * 0.02, R * 0.40, Math.PI * 0.22, Math.PI * 0.78);
+    g.arc(0, R * (0.02 + J * 0.06), R * (0.40 + J * 0.09),
+          Math.PI * (0.22 - J * 0.07), Math.PI * (0.78 + J * 0.07));
     g.stroke();
   }
   if (A > 0.01){
@@ -899,12 +1300,22 @@ function draw(){
   // the goal, under the threads
   drawGoal(ctx, cellX(S.maze.cols - 1), cellY(S.maze.rows - 1), cs, S.t);
 
+  // the way ahead, while the glimmer lasts
+  if (S.fx.beacon > 0) drawBeacon(ctx, cs, S.t);
+
+  // charms waiting in the corridors
+  S.charms.forEach((type, k) => {
+    const [c, r] = k.split(",").map(Number);
+    drawCharm(ctx, cellX(c), cellY(r), cs, type, S.t);
+  });
+
   // the yarn itself
   if (S.fabric){
     ctx.drawImage(S.fabric, S.ox - S.fabricB, S.oy - S.fabricB, S.fabricW, S.fabricH);
   }
 
-  drawDot(ctx, S.px, S.py, cs, S.t, Math.min(1, S.still / S.stillMax), angerNow());
+  drawDot(ctx, S.px, S.py, cs, S.t, Math.min(1, S.still / S.stillMax), angerNow(), S.joy);
+  drawToasts(ctx, cs);
 
   // dead-end flash
   if (S.flash > 0){
@@ -913,6 +1324,8 @@ function draw(){
   }
 
   ctx.restore();
+
+  drawConfetti(ctx);
 }
 
 function roundRect(g, x, y, w, h, r){
@@ -949,7 +1362,7 @@ function frame(now){
 
   if (S.mode === "play"){
     if (S.moving){
-      S.mt += dt / MOVE_TIME;
+      S.mt += dt / moveTime();
       if (S.mt >= 1){ arrive(); }
       else {
         const e = S.mt < 0.5 ? 2 * S.mt * S.mt : 1 - Math.pow(-2 * S.mt + 2, 2) / 2;
@@ -961,7 +1374,9 @@ function frame(now){
     }
 
     if (!S.moving){
-      S.still += dt;
+      // scissors slow the winding; a spare spool stops it dead
+      const rate = S.fx.freeze > 0 ? 0 : (S.fx.slow > 0 ? 0.4 : 1);
+      S.still += dt * rate;
       if (S.still >= S.stillMax){
         gameOver("You sat too long.",
           "The yarn wound itself around you while you were thinking. Keep drifting next time — even a wrong turn beats standing still.");
@@ -971,6 +1386,33 @@ function frame(now){
     const frac = Math.min(1, S.still / S.stillMax);
     stillfill.style.width = (frac * 100).toFixed(1) + "%";
     stillbar.classList.toggle("warn", frac > 0.65);
+
+    // charm timers
+    let fxChanged = false;
+    for (const k in S.fx){
+      if (S.fx[k] > 0){ S.fx[k] = Math.max(0, S.fx[k] - dt); fxChanged = true; }
+    }
+    if (fxChanged) paintFx();
+
+    // the clock
+    S.levelT += dt;
+    const stamp = fmtTime(S.levelT);
+    if (stamp !== S.stamp){ S.stamp = stamp; timechip.textContent = stamp; }
+  }
+
+  if (S.mode === "cheer"){
+    S.cheerT += dt;
+    if (S.cheerT >= CHEER_DUR) showClearCard();
+  }
+
+  // green with delight once the gold is found
+  const wantJoy = (S.mode === "cheer" || S.mode === "clear" || S.mode === "win") ? 1 : 0;
+  S.joy += (wantJoy - S.joy) * Math.min(1, dt * 7);
+
+  stepConfetti(dt);
+  for (let i = S.toasts.length - 1; i >= 0; i--){
+    S.toasts[i].t += dt;
+    if (S.toasts[i].t > 1.9) S.toasts.splice(i, 1);
   }
 
   draw();
@@ -1027,6 +1469,8 @@ window.addEventListener("resize", () => { layout(); });
    Go
    ============================================================ */
 S.maze = genMaze(LEVELS[0].c, LEVELS[0].r, mulberry32(20260901));
+{ const sol = solve(S.maze); S.path = sol.path; S.pathIdx = sol.idx; }
+S.charms = new Map();
 S.threads = MAX_THREADS;
 paintHud();
 layout();
