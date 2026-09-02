@@ -442,7 +442,8 @@ const CHARMS = {
   scissors: {icon: "\u2702\uFE0F", name: "Scissors",     note: "Stillness eased, a little",                   dur: 7},
   spool:    {icon: "\uD83E\uDDF5", name: "Spool",        note: "A thread mended",                            dur: 3.5},
   beacon:   {icon: "\u2728",        name: "Glimmer",      note: "The way ahead lights up",                    dur: 6},
-  shuttle:  {icon: "\u26A1",        name: "Shuttle",      note: "Quick feet",                                 dur: 9}
+  shuttle:  {icon: "\u26A1",        name: "Shuttle",      note: "Quick feet",                                 dur: 9},
+  bobbin:   {icon: "\uD83E\uDEA1", name: "Bobbin",       note: "Wound tight \u2014 run straight through rot", dur: 10}
 };
 
 let S = {
@@ -468,7 +469,7 @@ let S = {
   beast: null,          // the thread beast, once it wakes
   beastT: 99,           // seconds until it does
   beastWarned: false,
-  fx: {slow: 0, freeze: 0, haste: 0, beacon: 0},
+  fx: {slow: 0, freeze: 0, haste: 0, beacon: 0, ward: 0},
   toasts: [],
   confetti: [],
   joy: 0,               // 0 purple, 1 delighted green
@@ -643,7 +644,7 @@ function scatterCharms(m, path, rnd, level){
   const picks = near.slice(0, onRoute).concat(far.slice(0, total - onRoute));
 
   // scissors are the staple; the rest are the surprises
-  const bag = ["scissors", "scissors", "shuttle", "beacon", "spool"];
+  const bag = ["scissors", "scissors", "shuttle", "beacon", "spool", "bobbin"];
   const charms = new Map();
   picks.forEach((k, i) => {
     charms.set(k, i === 0 ? "scissors" : bag[Math.floor(rnd() * bag.length)]);
@@ -951,7 +952,7 @@ function startLevel(n){
   S.pathIdx = sol.idx;
   S.onPath = new Set(["0,0"]);
   S.charms = scatterCharms(S.maze, sol.path, mulberry32(555 + n * 8887), n);
-  S.fx = {slow: 0, freeze: 0, haste: 0, beacon: 0};
+  S.fx = {slow: 0, freeze: 0, haste: 0, beacon: 0, ward: 0};
   S.eaten = new Set();
   S.beast = null;
   S.beastT = L.beast;
@@ -993,6 +994,7 @@ function paintFx(){
   if (S.fx.freeze > 0) parts.push(["\uD83E\uDDF5", S.fx.freeze]);
   if (S.fx.haste > 0)  parts.push(["\u26A1", S.fx.haste]);
   if (S.fx.beacon > 0) parts.push(["\u2728", S.fx.beacon]);
+  if (S.fx.ward > 0)   parts.push(["\uD83E\uDEA1", S.fx.ward]);
   let danger = null;
   if (S.mode === "play"){
     if (S.beast) danger = "loose";
@@ -1051,7 +1053,7 @@ function arrive(){
   S.trailCells.push(S.cc + "," + S.cr);
   S.still = 0;
   const here = S.cc + "," + S.cr;
-  if (S.eaten.has(here)){
+  if (S.eaten.has(here) && S.fx.ward <= 0){
     gameOver("You touched the rot.",
       "That stretch of yarn had already been chewed through. Red thread doesn't hold anyone.");
     return;
@@ -1093,6 +1095,7 @@ function takeCharm(key){
   if (type === "scissors")     S.fx.slow += C.dur;
   else if (type === "shuttle") S.fx.haste += C.dur;
   else if (type === "beacon")  S.fx.beacon += C.dur;
+  else if (type === "bobbin")  S.fx.ward += C.dur;
   else if (type === "spool"){
     if (S.threads < MAX_THREADS){ S.threads++; paintHud(); }
     else { S.fx.freeze += C.dur; note = "Stillness held at bay"; }
@@ -1103,16 +1106,30 @@ function takeCharm(key){
 
 /* ---------- outcomes ---------- */
 const TEALS = ["#14b8a6", "#2dd4bf", "#5eead4", "#99f6e4", "#0d9488", "#6ee7d7", "#0f766e"];
+const GOLDS = ["#f0c04a", "#f6d089", "#ffe9a8", "#e0a92f", "#fff3cf", "#ecb43a"];
 
 function mkConfetti(x, y, vx, vy, delay){
+  const heart = Math.random() < 0.40;          // gold hearts among the teal
   return {
     x: x, y: y, vx: vx, vy: vy, delay: delay,
     rot: Math.random() * 6.283, vrot: (Math.random() - 0.5) * 9,
-    w: 5 + Math.random() * 8, h: 8 + Math.random() * 13,
-    color: TEALS[Math.floor(Math.random() * TEALS.length)],
-    ribbon: Math.random() < 0.35,
+    w: heart ? 9 + Math.random() * 9 : 5 + Math.random() * 8,
+    h: 8 + Math.random() * 13,
+    heart: heart,
+    color: heart ? GOLDS[Math.floor(Math.random() * GOLDS.length)]
+                 : TEALS[Math.floor(Math.random() * TEALS.length)],
+    ribbon: !heart && Math.random() < 0.35,
+    shimmer: Math.random() * 6.283,
     life: 3.6 + Math.random() * 2.6, age: 0
   };
+}
+
+function heartPath(g, s){
+  g.beginPath();
+  g.moveTo(0, s * 0.42);
+  g.bezierCurveTo(-s * 1.15, -s * 0.30, -s * 0.48, -s * 1.05, 0, -s * 0.42);
+  g.bezierCurveTo( s * 0.48, -s * 1.05,  s * 1.15, -s * 0.30, 0, s * 0.42);
+  g.closePath();
 }
 
 function burstConfetti(){
@@ -1159,7 +1176,22 @@ function drawConfetti(g){
     g.translate(p.x, p.y);
     g.rotate(p.rot);
     g.fillStyle = p.color;
-    if (p.ribbon){
+    if (p.heart){
+      // a gold heart, catching the light as it turns
+      const shine = 0.72 + 0.28 * Math.sin(p.age * 9 + p.shimmer);
+      const s = p.w * 0.5;
+      g.globalAlpha = fade * shine;
+      g.shadowColor = "rgba(240,192,74,0.85)";
+      g.shadowBlur = p.w * 0.9;
+      heartPath(g, s);
+      g.fill();
+      g.shadowBlur = 0;
+      g.globalAlpha = fade * shine * 0.9;
+      g.fillStyle = "rgba(255,252,235,0.95)";
+      g.beginPath();
+      g.ellipse(-s * 0.32, -s * 0.34, s * 0.20, s * 0.13, -0.5, 0, Math.PI * 2);
+      g.fill();
+    } else if (p.ribbon){
       g.beginPath();
       g.moveTo(-p.w * 0.5, -p.h * 0.5);
       g.quadraticCurveTo(p.w * 0.7, 0, -p.w * 0.5, p.h * 0.5);
@@ -1340,6 +1372,7 @@ function drawCharm(g, x, y, cs, type, t){
   const tint = type === "scissors" ? "180,190,210"
              : type === "spool"    ? "244,169,200"
              : type === "beacon"   ? "240,192,74"
+             : type === "bobbin"   ? "201,160,240"
              :                       "125,227,211";
   const halo = g.createRadialGradient(0, 0, U * 0.2, 0, 0, U * 1.5);
   halo.addColorStop(0, "rgba(" + tint + ",0.42)");
@@ -1394,6 +1427,28 @@ function drawCharm(g, x, y, cs, type, t){
     g.closePath(); g.fill();
     g.fillStyle = "#fff6dd";
     g.beginPath(); g.arc(0, 0, U * 0.2, 0, Math.PI * 2); g.fill();
+
+  } else if (type === "bobbin"){
+    // a narrow bobbin with dark rims and purple thread wound tight
+    g.fillStyle = "#c9a0f0";
+    roundRect(g, -U * 0.36, -U * 0.40, U * 0.72, U * 0.80, U * 0.12); g.fill();
+    g.strokeStyle = "rgba(255,255,255,0.62)";
+    g.lineWidth = U * 0.065;
+    for (let i = -2; i <= 2; i++){
+      g.beginPath();
+      g.moveTo(-U * 0.36, U * i * 0.16 + U * 0.05);
+      g.lineTo(U * 0.36, U * i * 0.16 - U * 0.05);
+      g.stroke();
+    }
+    g.fillStyle = "#6b4a72";
+    roundRect(g, -U * 0.50, -U * 0.66, U * 1.00, U * 0.19, U * 0.09); g.fill();
+    roundRect(g, -U * 0.50, U * 0.47, U * 1.00, U * 0.19, U * 0.09); g.fill();
+    g.strokeStyle = "#c9a0f0";
+    g.lineWidth = U * 0.10;
+    g.beginPath();
+    g.moveTo(U * 0.34, U * 0.10);
+    g.quadraticCurveTo(U * 0.82, U * 0.30, U * 0.58, U * 0.72);
+    g.stroke();
 
   } else { // shuttle — a pointed weaving shuttle with thread wound round it
     g.fillStyle = "#7de3d3";
@@ -1574,10 +1629,10 @@ function drawDot(g, x, y, cs, t, stillFrac, anger, joy){
   g.lineWidth = R * 0.11;
   if (A < 0.99){
     g.strokeStyle = rgba(face, 1 - A);
-    g.lineWidth = R * (0.11 + J * 0.03);
+    g.lineWidth = R * (0.11 + J * 0.06);
     g.beginPath();
-    g.arc(0, R * (0.02 + J * 0.06), R * (0.40 + J * 0.09),
-          Math.PI * (0.22 - J * 0.07), Math.PI * (0.78 + J * 0.07));
+    g.arc(0, R * (0.02 - J * 0.10), R * (0.40 + J * 0.26),
+          Math.PI * (0.22 - J * 0.13), Math.PI * (0.78 + J * 0.13));
     g.stroke();
   }
   if (A > 0.01){
@@ -1680,6 +1735,16 @@ function draw(){
   if (S.beast) drawBeast(ctx, cs, S.t);
 
   drawDot(ctx, S.px, S.py, cs, S.t, Math.min(1, S.still / S.stillMax), angerNow(), S.joy);
+  if (S.fx.ward > 0){
+    ctx.save();
+    ctx.strokeStyle = "rgba(201,160,240," + (0.45 + Math.sin(S.t * 6) * 0.28).toFixed(3) + ")";
+    ctx.lineWidth = cs * 0.06;
+    ctx.setLineDash([cs * 0.15, cs * 0.11]);
+    ctx.lineDashOffset = -S.t * cs * 0.7;
+    ctx.beginPath(); ctx.arc(S.px, S.py, cs * 0.43, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
   drawToasts(ctx, cs);
 
   // dead-end flash
