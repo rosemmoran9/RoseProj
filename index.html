@@ -190,18 +190,18 @@
     <span class="sub">a little maze of string</span>
   </div>
 
-  <div class="gauge">
+  <div class="gauge" id="gStill">
     <span class="label">Stillness</span>
     <div class="stillbar" id="stillbar"><i id="stillfill"></i></div>
   </div>
 
   <div class="gauge">
-    <span class="label">Progress</span>
+    <span class="label" id="pctlabel">Progress</span>
     <div class="pctbar"><i id="pctfill"></i></div>
     <span class="pcttext" id="pcttext">0%</span>
   </div>
 
-  <div class="gauge">
+  <div class="gauge" id="gThreads">
     <span class="label">Threads</span>
     <div class="lives" id="lives"></div>
   </div>
@@ -428,11 +428,17 @@ const pctfill = document.getElementById("pctfill");
 const pcttext = document.getElementById("pcttext");
 const timechip = document.getElementById("timechip");
 const fxrow = document.getElementById("fxrow");
+const gStill = document.getElementById("gStill");
+const gThreads = document.getElementById("gThreads");
+const pctlabel = document.getElementById("pctlabel");
 
 const MOVE_TIME = 0.125;   // seconds per cell
-const moveTime = () => MOVE_TIME * (S.fx.haste > 0 ? 0.58 : 1);
+const moveTime = () => MOVE_TIME * (S.fx.haste > 0 ? 0.58 : 1)
+                                 * (S.role === "beast" ? CHASE_DRAG : 1);
 const MAX_THREADS = 3;
 const BEAST_LAG = 4;       // it hunts the yarn you walked, this many cells back
+const CHASE_RUNNER = 3.0;  // cells per second for the runner you are hunting
+const CHASE_DRAG = 2.4;    // you move this much slower when you are the beast
 const BEAST_WANDER = 0.45; // ...but this often it just blunders off somewhere
 const ANGRY_DUR = 1.6;     // how long the dot stays cross about a dead end
 const CHEER_DUR = 1.7;     // confetti time before the level card appears
@@ -473,6 +479,9 @@ let S = {
   toasts: [],
   confetti: [],
   joy: 0,               // 0 purple, 1 delighted green
+  crowned: false,       // earned after all eleven
+  role: "dot",          // "dot" | "beast" — who you are playing
+  foe: null,            // in the chase, the runner you are hunting
   cheerT: 0,
   levelT: 0, totalT: 0, lastLevelT: 0,
   angryT: 0,            // countdown on the arms-crossed sulk
@@ -816,16 +825,15 @@ const BEAST_C = {
   face: [ 92,  22,  44]
 };
 
-function drawBeast(g, cs, t){
-  const bs = S.beast;
+function drawBeast(g, cs, t, bx, by, bang){
   const chomp = 0.5 + 0.5 * Math.sin(t * 6);
   const open = 0.13 + chomp * 0.46;
   const R = cs * 0.72 * (1 + Math.sin(t * 6) * 0.03);
   const C = BEAST_C;
 
   g.save();
-  g.translate(bs.px + Math.sin(t * 20) * cs * 0.012,
-              bs.py - Math.abs(Math.sin(t * 6)) * cs * 0.045);   // a little bounce
+  g.translate(bx + Math.sin(t * 20) * cs * 0.012,
+              by - Math.abs(Math.sin(t * 6)) * cs * 0.045);   // a little bounce
 
   const halo = g.createRadialGradient(0, 0, R * 0.4, 0, 0, R * 1.7);
   halo.addColorStop(0, rgba(C.deep, 0.30));
@@ -835,7 +843,7 @@ function drawBeast(g, cs, t){
 
   // ---- the wedge, chomping the way it is headed ----
   g.save();
-  g.rotate(bs.ang);
+  g.rotate(bang);
   g.scale(1 - chomp * 0.04, 1 + chomp * 0.04);      // squashes as it bites
 
   g.save();
@@ -902,8 +910,8 @@ function drawBeast(g, cs, t){
   g.beginPath(); g.ellipse(-R * 0.32, -R * 0.36, R * 0.22, R * 0.14, -0.6, 0, Math.PI * 2); g.fill();
 
   // ---- eyes: the same little dots the player has ----
-  let ea = bs.ang - Math.PI / 2;
-  if (Math.sin(ea) > 0.001) ea = bs.ang + Math.PI / 2;
+  let ea = bang - Math.PI / 2;
+  if (Math.sin(ea) > 0.001) ea = bang + Math.PI / 2;
 
   for (const sgn of [1, -1]){
     const a = ea + sgn * 0.42;
@@ -919,7 +927,7 @@ function drawBeast(g, cs, t){
   }
 
   // a small anger puff, round the back out of the way
-  const ma = bs.ang + Math.PI;
+  const ma = bang + Math.PI;
   const mx = Math.cos(ma) * R * 0.60, my = Math.sin(ma) * R * 0.60;
   const sp = R * 0.16 * (0.75 + Math.sin(t * 12) * 0.12);
   g.strokeStyle = "rgba(255,140,165,0.9)";
@@ -933,6 +941,172 @@ function drawBeast(g, cs, t){
   g.stroke();
 
   g.restore();
+}
+
+/* ---------- the chase: you are the beast ---------- */
+function distMapFromGoal(m){
+  const d = new Map([[(m.cols - 1) + "," + (m.rows - 1), 0]]);
+  const q = [[m.cols - 1, m.rows - 1]];
+  for (let i = 0; i < q.length; i++){
+    const c = q[i][0], r = q[i][1];
+    const dd = d.get(c + "," + r);
+    for (let x = 0; x < 4; x++){
+      if (m.at(c, r).w[x]) continue;
+      const nc = c + DX[x], nr = r + DY[x];
+      if (nc < 0 || nr < 0 || nc >= m.cols || nr >= m.rows) continue;
+      const k = nc + "," + nr;
+      if (d.has(k)) continue;
+      d.set(k, dd + 1);
+      q.push([nc, nr]);
+    }
+  }
+  return d;
+}
+
+function restoreDotHud(){
+  gStill.style.display = "";
+  gThreads.style.display = "";
+  pctlabel.textContent = "Progress";
+}
+
+function startChase(){
+  S.role = "beast";
+  S.crowned = true;
+  const cols = 17, rows = 11;
+  S.maze = genMaze(cols, rows, mulberry32((Date.now() & 0xffffff) | 1));
+  const sol = solve(S.maze);
+  S.path = sol.path; S.pathIdx = sol.idx;
+
+  S.charms = new Map();
+  S.eaten = new Set();
+  S.beast = null; S.beastT = Infinity; S.beastWarned = true;
+  S.fx = {slow: 0, freeze: 0, haste: 0, beacon: 0, ward: 0};
+  S.toasts = []; S.confetti = [];
+  S.visited = new Set(); S.onPath = new Set(); S.deadSeen = new Set();
+  S.trail = []; S.trailCells = [];
+  S.joy = 0; S.cheerT = 0; S.levelT = 0;
+  S.still = 0; S.stillMax = Infinity;
+  S.threads = MAX_THREADS;
+
+  // you start in the corner furthest from where the runner sets off
+  S.cc = cols - 1; S.cr = 0; S.tc = S.cc; S.tr = S.cr;
+  S.moving = false; S.mt = 0; S.playerAng = Math.PI;
+  S.mode = "play";
+  layout();
+  S.px = cellX(S.cc); S.py = cellY(S.cr);
+  bite(S.cc, S.cr);
+
+  S.dist = distMapFromGoal(S.maze);
+  S.dist0 = S.dist.get("0,0") || 1;
+  S.foe = {
+    c: 0, r: 0, tc: 0, tr: 0, mt: 0, moving: false,
+    px: cellX(0), py: cellY(0), speed: CHASE_RUNNER
+  };
+
+  gStill.style.display = "none";
+  gThreads.style.display = "none";
+  pctlabel.textContent = "Runner";
+  levelchip.textContent = "The Chase";
+  paintChasePct();
+  paintFx();
+  S.toasts.push({x: S.px, y: S.py, text: "\uD83E\uDDB7  Eat it before it reaches the gold",
+                 color: "#d02a45", t: 0});
+}
+
+function paintChasePct(){
+  const d = S.dist.get(S.foe.c + "," + S.foe.r);
+  const pct = d == null ? 0 : (1 - d / S.dist0) * 100;
+  pctfill.style.width = Math.max(0, pct).toFixed(2) + "%";
+  pcttext.textContent = Math.round(Math.max(0, pct)) + "%";
+}
+
+// the runner picks its way to the gold, refusing to step in rot
+function foeNext(){
+  const m = S.maze;
+  const start = S.foe.c + "," + S.foe.r;
+  const goal = (m.cols - 1) + "," + (m.rows - 1);
+  const prev = new Map([[start, null]]);
+  const q = [[S.foe.c, S.foe.r]];
+  for (let i = 0; i < q.length; i++){
+    const c = q[i][0], r = q[i][1];
+    if (c + "," + r === goal) break;
+    for (let d = 0; d < 4; d++){
+      if (m.at(c, r).w[d]) continue;
+      const nc = c + DX[d], nr = r + DY[d];
+      if (nc < 0 || nr < 0 || nc >= m.cols || nr >= m.rows) continue;
+      const k = nc + "," + nr;
+      if (prev.has(k) || S.eaten.has(k)) continue;
+      prev.set(k, c + "," + r);
+      q.push([nc, nr]);
+    }
+  }
+  if (!prev.has(goal)) return null;         // sealed in
+  let k = goal;
+  while (prev.get(k) !== start) k = prev.get(k);
+  return k.split(",").map(Number);
+}
+
+function stepFoe(dt){
+  const f = S.foe;
+  const m = S.maze;
+
+  if (!f.moving){
+    const nx = foeNext();
+    if (nx){
+      f.tc = nx[0]; f.tr = nx[1]; f.moving = true; f.mt = 0;
+      if (f.trapped){ f.trapped = false; }
+    } else if (!f.trapped){
+      f.trapped = true;
+      S.toasts.push({x: f.px, y: f.py, text: "It has nowhere left to run",
+                     color: "#d02a45", t: 0});
+    }
+  }
+  if (f.moving){
+    f.mt += dt * f.speed;
+    if (f.mt >= 1){
+      f.c = f.tc; f.r = f.tr; f.moving = false; f.mt = 0;
+      paintChasePct();
+      if (f.c === m.cols - 1 && f.r === m.rows - 1){ chaseLose(); return; }
+    }
+  }
+  const p = Math.min(1, f.mt);
+  f.px = cellX(f.c) + (cellX(f.tc) - cellX(f.c)) * p;
+  f.py = cellY(f.r) + (cellY(f.tr) - cellY(f.r)) * p;
+
+  if (Math.hypot(f.px - S.px, f.py - S.py) < S.cs * 0.62){
+    chaseWin(f.trapped ? "Cornered with nowhere to go."
+                       : "Run down in open yarn.");
+  }
+}
+
+function chaseCards(title, body, emoji){
+  show({
+    emoji: emoji,
+    title: title,
+    body: body,
+    html: '<div class="rules">Chase time <span>' + fmtTime(S.levelT) + '</span></div>',
+    btn: "Chase again",
+    ghost: "Back to the maze",
+    action: () => { hide(); startChase(); },
+    ghostAction: () => {
+      S.role = "dot"; S.foe = null;
+      S.threads = MAX_THREADS; S.totalT = 0;
+      restoreDotHud(); paintHud(); hide(); startLevel(0);
+    }
+  });
+}
+
+function chaseWin(why){
+  if (S.mode !== "play") return;
+  S.mode = "over";
+  chaseCards("Caught.", why + " It never reached the gold, and the yarn is yours.", "\uD83E\uDDB7");
+}
+
+function chaseLose(){
+  if (S.mode !== "play") return;
+  S.mode = "over";
+  S.joy = 1;
+  chaseCards("It got away.", "The little dot reached the golden ball with you still chewing. Faster next time.", "\uD83C\uDF1F");
 }
 
 /* ---------- level setup ---------- */
@@ -954,6 +1128,8 @@ function startLevel(n){
   S.charms = scatterCharms(S.maze, sol.path, mulberry32(555 + n * 8887), n);
   S.fx = {slow: 0, freeze: 0, haste: 0, beacon: 0, ward: 0};
   S.eaten = new Set();
+  S.role = "dot"; S.foe = null;
+  restoreDotHud();
   S.beast = null;
   S.beastT = L.beast;
   S.beastWarned = false;
@@ -1042,12 +1218,15 @@ function tryMove(d){
   S.tc = nc; S.tr = nr;
   S.moving = true; S.mt = 0;
   S.still = 0;
+  S.playerAng = Math.atan2(DY[d], DX[d]);
 }
 
 function arrive(){
   S.cc = S.tc; S.cr = S.tr;
   S.moving = false;
   S.px = cellX(S.cc); S.py = cellY(S.cr);
+  S.still = 0;
+  if (S.role === "beast"){ bite(S.cc, S.cr); return; }
   S.trail.push({x: S.px, y: S.py});
   if (S.trail.length > 340) S.trail.shift();
   S.trailCells.push(S.cc + "," + S.cr);
@@ -1105,6 +1284,27 @@ function takeCharm(key){
 }
 
 /* ---------- outcomes ---------- */
+const CROWN_SVG =
+  '<svg width="96" height="72" viewBox="0 0 86 64" style="display:block;margin:2px auto 16px">' +
+    '<defs>' +
+      '<linearGradient id="ycg" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="#fff3cf"/><stop offset=".45" stop-color="#f0c04a"/>' +
+        '<stop offset="1" stop-color="#d99a20"/></linearGradient>' +
+      '<radialGradient id="yrg" cx=".35" cy=".3" r=".85">' +
+        '<stop offset="0" stop-color="#ff8fa3"/><stop offset=".5" stop-color="#e0143c"/>' +
+        '<stop offset="1" stop-color="#9c0022"/></radialGradient>' +
+    '</defs>' +
+    '<path d="M6 50 V28 L20 11 L30 33 L43 5 L56 33 L66 11 L80 28 V50 Z" fill="url(#ycg)" ' +
+      'stroke="#c98f14" stroke-width="2.5" stroke-linejoin="round"/>' +
+    '<circle cx="20" cy="11" r="4.5" fill="#fff6dd" stroke="#c98f14" stroke-width="1.5"/>' +
+    '<circle cx="43" cy="5" r="5" fill="#fff6dd" stroke="#c98f14" stroke-width="1.5"/>' +
+    '<circle cx="66" cy="11" r="4.5" fill="#fff6dd" stroke="#c98f14" stroke-width="1.5"/>' +
+    '<rect x="5" y="42" width="76" height="15" rx="5" fill="#e8b53a" stroke="#c98f14" stroke-width="2.5"/>' +
+    '<circle cx="43" cy="49.5" r="7.5" fill="url(#yrg)" stroke="#8e0020" stroke-width="1.5"/>' +
+    '<ellipse cx="40.2" cy="46.8" rx="2.5" ry="1.7" fill="rgba(255,255,255,.8)" ' +
+      'transform="rotate(-25 40.2 46.8)"/>' +
+  '</svg>';
+
 const TEALS = ["#14b8a6", "#2dd4bf", "#5eead4", "#99f6e4", "#0d9488", "#6ee7d7", "#0f766e"];
 const GOLDS = ["#f0c04a", "#f6d089", "#ffe9a8", "#e0a92f", "#fff3cf", "#ecb43a"];
 
@@ -1218,14 +1418,18 @@ function levelClear(){
 function showClearCard(){
   if (S.level >= LEVELS.length - 1){
     S.mode = "win";
+    S.crowned = true;
     show({
-      emoji: "\uD83E\uDDF6\u2728",
+      emoji: "",
       title: "All eleven, unwound.",
       body: "You threaded every maze without sitting still and without running out of string. The yarn basket is empty and the little dot is free.",
-      html: '<div class="rules">Last level <span>' + fmtTime(S.lastLevelT) +
+      html: CROWN_SVG +
+            '<div class="rules">Last level <span>' + fmtTime(S.lastLevelT) +
             '</span><br>All eleven <span>' + fmtTime(S.totalT) + '</span></div>',
       btn: "Wind it up again",
-      action: () => { S.threads = MAX_THREADS; S.totalT = 0; paintHud(); hide(); startLevel(0); }
+      ghost: "Play as the thread beast",
+      action: () => { S.threads = MAX_THREADS; S.totalT = 0; paintHud(); hide(); startLevel(0); },
+      ghostAction: () => { hide(); startChase(); }
     });
     return;
   }
@@ -1516,6 +1720,60 @@ function drawToasts(g, cs){
   }
 }
 
+// gold, three-pointed, one ruby
+function drawCrown(g, R, t){
+  const w = R * 1.5, h = R * 0.66;
+  g.save();
+  g.translate(0, -R * 1.02 - Math.abs(Math.sin(t * 3)) * R * 0.06);
+
+  g.beginPath();
+  g.moveTo(-w / 2, 0);
+  g.lineTo(-w / 2, -h * 0.30);
+  g.lineTo(-w * 0.42, -h * 0.95);
+  g.lineTo(-w * 0.17, -h * 0.34);
+  g.lineTo(0, -h * 1.18);
+  g.lineTo(w * 0.17, -h * 0.34);
+  g.lineTo(w * 0.42, -h * 0.95);
+  g.lineTo(w / 2, -h * 0.30);
+  g.lineTo(w / 2, 0);
+  g.closePath();
+
+  const gold = g.createLinearGradient(0, -h * 1.18, 0, 0);
+  gold.addColorStop(0, "#fff3cf");
+  gold.addColorStop(0.45, "#f0c04a");
+  gold.addColorStop(1, "#d99a20");
+  g.fillStyle = gold;
+  g.shadowColor = "rgba(240,192,74,0.75)";
+  g.shadowBlur = R * 0.5;
+  g.fill();
+  g.shadowBlur = 0;
+  g.strokeStyle = "#c98f14";
+  g.lineWidth = R * 0.05;
+  g.lineJoin = "round";
+  g.stroke();
+
+  // pearls on the points
+  g.fillStyle = "#fff6dd";
+  for (const pt of [[-w * 0.42, -h * 0.95], [0, -h * 1.18], [w * 0.42, -h * 0.95]]){
+    g.beginPath(); g.arc(pt[0], pt[1], R * 0.075, 0, Math.PI * 2); g.fill();
+  }
+
+  // the ruby
+  const ruby = g.createRadialGradient(-R * 0.05, -h * 0.20, R * 0.02, 0, -h * 0.15, R * 0.17);
+  ruby.addColorStop(0, "#ff8fa3");
+  ruby.addColorStop(0.5, "#e0143c");
+  ruby.addColorStop(1, "#9c0022");
+  g.fillStyle = ruby;
+  g.beginPath(); g.arc(0, -h * 0.15, R * 0.155, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = "#8e0020";
+  g.lineWidth = R * 0.035;
+  g.stroke();
+  g.fillStyle = "rgba(255,255,255,0.8)";
+  g.beginPath(); g.ellipse(-R * 0.05, -h * 0.22, R * 0.05, R * 0.032, -0.5, 0, Math.PI * 2); g.fill();
+
+  g.restore();
+}
+
 function drawDot(g, x, y, cs, t, stillFrac, anger, joy){
   const r = cs * 0.26;
   const A = Math.max(0, Math.min(1, anger));      // colour / face blend
@@ -1642,6 +1900,13 @@ function drawDot(g, x, y, cs, t, stillFrac, anger, joy){
     g.stroke();
   }
 
+  if (S.crowned && J > 0.25){
+    g.save();
+    g.globalAlpha = Math.min(1, (J - 0.25) / 0.4);
+    drawCrown(g, R, t);
+    g.restore();
+  }
+
   // ---- the little anger mark ----
   if (A > 0.02){
     const s = R * 0.34 * (0.7 + Math.sin(t * 12) * 0.12);
@@ -1701,7 +1966,7 @@ function draw(){
   ctx.restore();
 
   // the trail you've left behind
-  if (S.trail.length > 1){
+  if (S.role === "dot" && S.trail.length > 1){
     ctx.save();
     ctx.lineCap = "round"; ctx.lineJoin = "round";
     ctx.strokeStyle = "rgba(185,140,240,0.30)";
@@ -1732,9 +1997,14 @@ function draw(){
   }
 
   if (S.rot) ctx.drawImage(S.rot, S.ox - S.fabricB, S.oy - S.fabricB, S.fabricW, S.fabricH);
-  if (S.beast) drawBeast(ctx, cs, S.t);
 
-  drawDot(ctx, S.px, S.py, cs, S.t, Math.min(1, S.still / S.stillMax), angerNow(), S.joy);
+  if (S.role === "beast"){
+    if (S.foe) drawDot(ctx, S.foe.px, S.foe.py, cs, S.t, 0, 0, S.joy);
+    drawBeast(ctx, cs, S.t, S.px, S.py, S.playerAng);
+  } else {
+    if (S.beast) drawBeast(ctx, cs, S.t, S.beast.px, S.beast.py, S.beast.ang);
+    drawDot(ctx, S.px, S.py, cs, S.t, Math.min(1, S.still / S.stillMax), angerNow(), S.joy);
+  }
   if (S.fx.ward > 0){
     ctx.save();
     ctx.strokeStyle = "rgba(201,160,240," + (0.45 + Math.sin(S.t * 6) * 0.28).toFixed(3) + ")";
@@ -1803,37 +2073,41 @@ function frame(now){
       for (let d = 0; d < 4; d++) if (held[d]){ tryMove(d); break; }
     }
 
-    if (!S.moving){
-      // scissors slow the winding; a spare spool stops it dead
-      const rate = S.fx.freeze > 0 ? 0 : (S.fx.slow > 0 ? 0.74 : 1);
-      S.still += dt * rate;
-      if (S.still >= S.stillMax){
-        gameOver("You sat too long.",
-          "The yarn wound itself around you while you were thinking. Keep drifting next time — even a wrong turn beats standing still.");
-      }
-    }
-
-    const frac = Math.min(1, S.still / S.stillMax);
-    stillfill.style.width = (frac * 100).toFixed(1) + "%";
-    stillbar.classList.toggle("warn", frac > 0.65);
-
-    // charm timers
-    let fxChanged = false;
-    for (const k in S.fx){
-      if (S.fx[k] > 0){ S.fx[k] = Math.max(0, S.fx[k] - dt); fxChanged = true; }
-    }
-    if (fxChanged) paintFx();
-
-    // the beast
-    if (!S.beast){
-      S.beastT -= dt;
-      if (S.beastT <= LEVELS[S.level].beast * 0.45 && !S.beastWarned){
-        S.beastWarned = true;
-        S.toasts.push({x: S.px, y: S.py, text: "The yarn is trembling\u2026", color: "#e0607f", t: 0});
-      }
-      if (S.beastT <= 0) wakeBeast();
+    if (S.role === "beast"){
+      stepFoe(dt);
     } else {
-      stepBeast(dt);
+      if (!S.moving){
+        // scissors slow the winding; a spare spool stops it dead
+        const rate = S.fx.freeze > 0 ? 0 : (S.fx.slow > 0 ? 0.74 : 1);
+        S.still += dt * rate;
+        if (S.still >= S.stillMax){
+          gameOver("You sat too long.",
+            "The yarn wound itself around you while you were thinking. Keep drifting next time — even a wrong turn beats standing still.");
+        }
+      }
+
+      const frac = Math.min(1, S.still / S.stillMax);
+      stillfill.style.width = (frac * 100).toFixed(1) + "%";
+      stillbar.classList.toggle("warn", frac > 0.65);
+
+      // charm timers
+      let fxChanged = false;
+      for (const k in S.fx){
+        if (S.fx[k] > 0){ S.fx[k] = Math.max(0, S.fx[k] - dt); fxChanged = true; }
+      }
+      if (fxChanged) paintFx();
+
+      // the beast
+      if (!S.beast){
+        S.beastT -= dt;
+        if (S.beastT <= LEVELS[S.level].beast * 0.45 && !S.beastWarned){
+          S.beastWarned = true;
+          S.toasts.push({x: S.px, y: S.py, text: "The yarn is trembling\u2026", color: "#e0607f", t: 0});
+        }
+        if (S.beastT <= 0) wakeBeast();
+      } else {
+        stepBeast(dt);
+      }
     }
 
     // the clock
