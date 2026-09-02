@@ -870,16 +870,28 @@ function drawBeast(g, cs, t){
   g.closePath();
   g.fill();
 
-  // two fat rounded teeth per jaw
+  // rounded triangle teeth, pointing into the bite
+  g.lineJoin = "round";
+  g.lineCap = "round";
   for (const sgn of [1, -1]){
     const ja = sgn * open;
+    const ux = Math.cos(ja), uy = Math.sin(ja);        // along the jaw
+    const inx = sgn > 0 ?  uy : -uy;                   // into the mouth
+    const iny = sgn > 0 ? -ux :  ux;
     for (let i = 0; i < 2; i++){
       const rr = R * (0.48 + i * 0.28);
-      const tx = Math.cos(ja) * rr, ty = Math.sin(ja) * rr;
-      g.fillStyle = "rgba(190,70,95,0.35)";
-      g.beginPath(); g.arc(tx, ty + R * 0.012, R * 0.105, 0, Math.PI * 2); g.fill();
+      const bx = ux * rr, by = uy * rr;
+      const hw = R * 0.095, h = R * 0.17;
       g.fillStyle = "#fffafb";
-      g.beginPath(); g.arc(tx, ty, R * 0.10, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "#fffafb";
+      g.lineWidth = R * 0.055;                          // rounds the three corners
+      g.beginPath();
+      g.moveTo(bx - ux * hw, by - uy * hw);
+      g.lineTo(bx + ux * hw, by + uy * hw);
+      g.lineTo(bx + inx * h, by + iny * h);
+      g.closePath();
+      g.fill();
+      g.stroke();
     }
   }
   g.restore();
@@ -888,43 +900,21 @@ function drawBeast(g, cs, t){
   g.fillStyle = "rgba(255,255,255,0.42)";
   g.beginPath(); g.ellipse(-R * 0.32, -R * 0.36, R * 0.22, R * 0.14, -0.6, 0, Math.PI * 2); g.fill();
 
-  // ---- big cross eyes, always the right way up ----
+  // ---- eyes: the same little dots the player has ----
   let ea = bs.ang - Math.PI / 2;
   if (Math.sin(ea) > 0.001) ea = bs.ang + Math.PI / 2;
-
-  const dx = S.px - bs.px, dy = S.py - bs.py;
-  const dl = Math.hypot(dx, dy) || 1;
 
   for (const sgn of [1, -1]){
     const a = ea + sgn * 0.42;
     const ex = Math.cos(a) * R * 0.44, ey = Math.sin(a) * R * 0.44;
-    const tx = Math.cos(ea) * R * 0.44 - ex, ty = Math.sin(ea) * R * 0.44 - ey;
-    const tl = Math.hypot(tx, ty) || 1;
-    const ix = tx / tl, iy = ty / tl;
 
-    g.fillStyle = "#fff";
-    g.beginPath(); g.ellipse(ex, ey, R * 0.165, R * 0.185, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = rgb(BEAST_C.face);
+    g.beginPath(); g.ellipse(ex, ey, R * 0.095, R * 0.118, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "rgba(255,255,255,0.8)";
+    g.beginPath(); g.arc(ex - R * 0.032, ey - R * 0.042, R * 0.036, 0, Math.PI * 2); g.fill();
 
-    const look = R * 0.055;
-    const pxp = ex + dx / dl * look, pyp = ey + dy / dl * look;
-    g.fillStyle = rgb(C.face);
-    g.beginPath(); g.arc(pxp, pyp, R * 0.093, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "rgba(255,255,255,0.95)";
-    g.beginPath(); g.arc(pxp - R * 0.038, pyp - R * 0.042, R * 0.036, 0, Math.PI * 2); g.fill();
-    g.beginPath(); g.arc(pxp + R * 0.034, pyp + R * 0.03, R * 0.019, 0, Math.PI * 2); g.fill();
-
-    // brow, dragged crossly down toward the middle
-    g.strokeStyle = rgb(C.face);
-    g.lineWidth = R * 0.072;
-    g.lineCap = "round";
-    g.beginPath();
-    g.moveTo(ex - ix * R * 0.21, ey - iy * R * 0.21 - R * 0.27);
-    g.lineTo(ex + ix * R * 0.15, ey + iy * R * 0.15 - R * 0.13);
-    g.stroke();
-
-    // blush
     g.fillStyle = "rgba(255,120,150,0.42)";
-    g.beginPath(); g.ellipse(ex, ey + R * 0.25, R * 0.115, R * 0.07, 0, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.ellipse(ex, ey + R * 0.22, R * 0.115, R * 0.07, 0, 0, Math.PI * 2); g.fill();
   }
 
   // a small anger puff, round the back out of the way
